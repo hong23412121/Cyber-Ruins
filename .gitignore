@@ -13,3 +13,4 @@
 !/Content/**/*.umap
 !/Content/**/*.csv
 !/Content/**/*.json
+!README.md
