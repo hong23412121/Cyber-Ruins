@@ -1,0 +1,15 @@
+*
+!*/
+!/.gitignore
+!/.gitattributes
+!/*.uproject
+!/README.md
+!/Docs/**
+!/Config/**
+!/Source/**
+!/Plugins/**
+!/RawContent/**
+!/Content/**/*.uasset
+!/Content/**/*.umap
+!/Content/**/*.csv
+!/Content/**/*.json
