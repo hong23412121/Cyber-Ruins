@@ -11,7 +11,7 @@ class AActor;
  * StateTree 巡逻状态任务调用：GetCurrentPoint 取点 → MoveToActor → 到达后 Advance。
  * 摆放规则（方案 §3.4）：巡逻点必须落在导航网格上，两两间距 4~12m。
  */
-UCLASS(ClassGroup = (赛博遗迹AI), Meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (CyberRelicAI), Meta = (BlueprintSpawnableComponent))
 class CYBERRUIN_API UPatrolRouteComponent : public UActorComponent
 {
 	GENERATED_BODY()

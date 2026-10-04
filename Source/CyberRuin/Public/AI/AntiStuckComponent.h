@@ -11,7 +11,7 @@
  * 审计官自建状态机、蜂群不依赖 StateTree，同样直接读本组件。
  * 挂载位置：怪 BP（BP_BaseEnemy 的子类）默认添加。
  */
-UCLASS(ClassGroup = (赛博遗迹AI), Meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (CyberRelicAI), Meta = (BlueprintSpawnableComponent))
 class CYBERRUIN_API UAntiStuckComponent : public UActorComponent
 {
 	GENERATED_BODY()

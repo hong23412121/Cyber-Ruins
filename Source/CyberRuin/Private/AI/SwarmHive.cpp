@@ -1,7 +1,7 @@
 #include "AI/SwarmHive.h"
 
 #include "AI/SwarmDrone.h"
-#include "Components/CharacterMovementComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "Kismet/GameplayStatics.h"
@@ -80,18 +80,19 @@ void ASwarmHive::Tick(float DeltaSeconds)
 		return;
 	}
 
-	const ACharacter* Player = UGameplayStatics::GetPlayerCharacter(this, 0);
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(this, 0);
 	const bool bCrouched = Player && Player->GetCharacterMovement() && Player->GetCharacterMovement()->IsCrouching();
 	const bool bInZone = Player && FVector::Dist2D(Player->GetActorLocation(), Anchor) <= GuardRadius;
 	const bool bAlerted = World->TimeSeconds < AlertedUntil;
 
-	// 视线脱战：锚点悬停位→玩家被墙挡住 = 脱离封锁圈，整群回锚点。
-	// 玩家胶囊默认阻挡 Visibility，必须忽略玩家自身，否则视线永远"被挡"。
 	bool bAnchorLOS = false;
 	if (Player)
 	{
+		// 玩家胶囊默认阻挡 Visibility，必须忽略玩家自身，否则视线永远"被挡"
 		FHitResult LosHit;
-		FCollisionQueryParams LosParams(SCENE_QUERY_STAT(SwarmAnchorLOS), /*bTraceComplex*/ false, /*IgnoreActor*/ Player);
+		FCollisionQueryParams LosParams;
+		LosParams.AddIgnoredActor(Player);
+		LosParams.TraceTag = TEXT("SwarmAnchorLOS");
 		bAnchorLOS = !World->LineTraceSingleByChannel(
 			LosHit, Anchor + FVector(0.f, 0.f, HoverZ), Player->GetActorLocation(), ECC_Visibility, LosParams);
 	}

@@ -24,7 +24,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "赛博遗迹AI", Meta = (WorldContext = "WorldContextObject"))
 	static bool ValidateSpawnPoint(const UObject* WorldContextObject, const FVector& Desired, FVector& OutSpawn);
 
-	/** 掠食者绕后取点：目标背后 ±SampleArcDegrees 扇形、FlankDistance 处投影导航网格。false = 全被挡 */
+	/** 掠食者绕后取点：目标背后 ±SampleArcDegrees 扇形、FlankDistance 处投影导航网格。false = 全被挡
+	 *  注意：参数 2/3 不带默认值（输出参数在后，C++ 禁止默认参数后跟无默认参数）；BP 调用方显式传 450 / 60 */
 	UFUNCTION(BlueprintCallable, Category = "赛博遗迹AI")
-	static bool GetFlankPoint(const AActor* Target, float FlankDistance = 450.f, float SampleArcDegrees = 60.f, FVector& OutPoint);
+	static bool GetFlankPoint(const AActor* Target, float FlankDistance, float SampleArcDegrees, FVector& OutPoint);
 };
