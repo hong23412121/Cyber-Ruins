@@ -12,10 +12,11 @@ public class CyberRuin : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"AIModule",              // AAIController / CrowdFollowing / EPathFollowingStatus
-			"NavigationSystem",       // UNavigationSystemV1 / FNavLocation
-			"StateTreeModule",       // UStateTree 资产类型
-			"GameplayStateTreeModule" // UStateTreeAIComponent / UStateTreeComponent（项目已启用该插件）
+			"AIModule",              // AAIController / CrowdFollowing / AIPerception / EPathFollowingStatus
+			"NavigationSystem",      // UNavigationSystemV1 / FNavLocation
+			"GameplayTags",          // 原生 GameplayTag（Event.Enemy.Seen/Lost）
+			"StateTreeModule",       // UStateTree 资产类型 / FStateTreeTaskBase / FStateTreeConditionBase
+			"GameplayStateTreeModule" // UStateTreeAIComponent / FStateTreeAITaskBase / 引擎 MoveTo 任务
 		});
 	}
 }

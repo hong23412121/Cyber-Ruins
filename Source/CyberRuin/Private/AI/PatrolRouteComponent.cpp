@@ -1,10 +1,40 @@
 #include "AI/PatrolRouteComponent.h"
 
+#include "Engine/TargetPoint.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 
 UPatrolRouteComponent::UPatrolRouteComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+}
+
+void UPatrolRouteComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 摆点即用：没拖引用时自动抓取附近 TargetPoint（按名字排序，PP_1/PP_2... 天然有序）
+	if (Points.Num() == 0 && bAutoCollectNearbyPoints && GetWorld())
+	{
+		const AActor* Owner = GetOwner();
+		const FVector Origin = Owner ? Owner->GetActorLocation() : FVector::ZeroVector;
+
+		TArray<AActor*> Found;
+		for (TActorIterator<ATargetPoint> It(GetWorld()); It; ++It)
+		{
+			if (FVector::Dist2D(It->GetActorLocation(), Origin) <= AutoCollectRadius)
+			{
+				Found.Add(*It);
+			}
+		}
+		Found.Sort([](const AActor& A, const AActor& B) { return A.GetFName().LexicalLess(B.GetFName()); });
+
+		for (AActor* Point : Found)
+		{
+			Points.Add(Point);
+		}
+	}
 }
 
 AActor* UPatrolRouteComponent::GetCurrentPoint() const

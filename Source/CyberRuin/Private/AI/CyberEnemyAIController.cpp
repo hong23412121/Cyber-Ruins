@@ -1,7 +1,12 @@
 #include "AI/CyberEnemyAIController.h"
 
 #include "Components/StateTreeAIComponent.h"
+#include "GameFramework/Pawn.h"
 #include "Navigation/CrowdFollowingComponent.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AIPerceptionTypes.h"
+#include "Perception/AISenseConfig_Sight.h"
+#include "Perception/AISense_Sight.h"
 #include "StateTree.h"
 
 ACyberEnemyAIController::ACyberEnemyAIController()
@@ -11,6 +16,24 @@ ACyberEnemyAIController::ACyberEnemyAIController()
 	UStateTreeAIComponent* STComp = CreateDefaultSubobject<UStateTreeAIComponent>(TEXT("StateTreeComp"));
 	StateTreeComp = STComp;
 	BrainComponent = STComp;
+
+	// 感知组件（方案 §3.3：视觉 20m、正面 140° 锥）——C++ 配置，免蓝图连线
+	PerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("PerceptionComponent"));
+	UAISenseConfig_Sight* Sight = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+	Sight->SightRadius = 2000.f;                    // 看见 20m
+	Sight->LoseSightRadius = 2500.f;                // 丢失 25m
+	Sight->PeripheralVisionAngleDegrees = 70.f;    // 半角 70°（正面 140° 锥）
+	Sight->DetectionByAffiliation.bDetectEnemies = true;
+	Sight->DetectionByAffiliation.bDetectNeutrals = true;
+	Sight->DetectionByAffiliation.bDetectFriendlies = true;
+	Sight->AutoSuccessRangeFromLastSeenLocation = 300.f; // 贴脸必发现
+	Sight->SetMaxAge(5.f);
+	if (PerceptionComponent)
+	{
+		PerceptionComponent->ConfigureSense(*Sight);
+		PerceptionComponent->SetDominantSense(UAISense_Sight::StaticClass());
+		PerceptionComponent->OnTargetPerceptionUpdated.AddDynamic(this, &ACyberEnemyAIController::HandleTargetPerceptionUpdated);
+	}
 
 	// RVO 群体避让参数（方案 §3.3）：AAIController 默认已带 CrowdFollowingComponent，这里只调参。
 	// PathFollowingComponent 是 private 成员，用公开的 GetPathFollowingComponent() 取
@@ -39,7 +62,32 @@ void ACyberEnemyAIController::OnPossess(APawn* InPawn)
 		}
 	}
 
+	// 记录出生点：哨兵 15m / 裁决者 30m 的 leash 基准（StateTree 条件直接读）
+	HomeLocation = InPawn ? InPawn->GetActorLocation() : FVector::ZeroVector;
+
 	Super::OnPossess(InPawn);
+}
+
+void ACyberEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
+{
+	CurrentTarget = Actor;
+	bCanSeeTarget = Stimulus.WasSuccessfullySensed();
+
+	if (!StateTreeComp)
+	{
+		return;
+	}
+
+	if (bCanSeeTarget)
+	{
+		// 看见：事件带目标载荷，追击状态可把 Payload.Target 绑给移动任务
+		SeenPayload.Target = Actor;
+		StateTreeComp->SendStateTreeEvent(FCyberRuinNativeTags::Get().EnemySeen, FConstStructView::Make(SeenPayload), TEXT("Perception"));
+	}
+	else
+	{
+		StateTreeComp->SendStateTreeEvent(FCyberRuinNativeTags::Get().EnemyLost, FConstStructView(), TEXT("Perception"));
+	}
 }
 
 void ACyberEnemyAIController::FreezeLogic()
