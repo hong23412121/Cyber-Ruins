@@ -12,8 +12,10 @@ public class CyberRuin : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"AIModule",        // AAIController / EPathFollowingStatus
-			"NavigationSystem"  // UNavigationSystemV1 / FNavLocation
+			"AIModule",              // AAIController / CrowdFollowing / EPathFollowingStatus
+			"NavigationSystem",       // UNavigationSystemV1 / FNavLocation
+			"StateTreeModule",       // UStateTree 资产类型
+			"GameplayStateTreeModule" // UStateTreeAIComponent / UStateTreeComponent（项目已启用该插件）
 		});
 	}
 }
