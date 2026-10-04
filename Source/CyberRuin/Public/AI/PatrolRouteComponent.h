@@ -22,9 +22,9 @@ public:
 
 	virtual void BeginPlay() override;
 
-	/** 当前巡逻点，无路线返回 nullptr */
+	/** 当前巡逻点，无路线返回 nullptr；空路线时惰性补抓一次（对抗树先于组件启动的时序竞态） */
 	UFUNCTION(BlueprintCallable, Category = "巡逻")
-	AActor* GetCurrentPoint() const;
+	AActor* GetCurrentPoint();
 
 	/** 推进到下一个巡逻点；往返模式在两端折返（跳过刚走过的端点，不原地空走） */
 	UFUNCTION(BlueprintCallable, Category = "巡逻")
@@ -46,6 +46,10 @@ public:
 	float AutoCollectRadius = 2500.f;
 
 private:
+	/** 空路线时自动抓点（只试一次，防空世界反复迭代全图 TargetPoint） */
+	void TryAutoCollect();
+
 	int32 Index = 0;
 	bool bGoingUp = true;
+	bool bAutoCollectTried = false;
 };

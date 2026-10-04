@@ -6,12 +6,15 @@
 #include "AI/StateTreeEnemyConditions.h"
 #include "AI/StateTreeEnemyEvents.h"
 #include "AI/StateTreeSentinelTasks.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "Components/StateTreeAIComponentSchema.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
+#include "Engine/SkeletalMesh.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "StateTree.h"
@@ -19,15 +22,27 @@
 #include "StateTreeCompilerLog.h"
 #include "StateTreeEditorData.h"
 #include "StateTreeState.h"
+#include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 
 namespace
 {
+	/** 资产已存在时，启动期资产注册表扫描可能让包处于"部分加载"状态——读写前先补全加载 */
+	void EnsurePackageFullyLoaded(UPackage* Package)
+	{
+		FlushAsyncLoading();
+		if (Package && !Package->IsFullyLoaded())
+		{
+			Package->FullyLoad();
+		}
+	}
+
 	/** 在指定资产路径创建（或复用）包里的主对象 */
 	template<typename T>
 	T* GetOrCreateAsset(const FString& AssetPath, const FName AssetName)
 	{
 		UPackage* Package = CreatePackage(*AssetPath);
+		EnsurePackageFullyLoaded(Package);
 		if (T* Existing = FindObject<T>(Package, *AssetName.ToString()))
 		{
 			return Existing;
@@ -39,6 +54,7 @@ namespace
 	bool SaveAsset(UObject* Asset)
 	{
 		UPackage* Package = CastChecked<UPackage>(Asset->GetOuter());
+		EnsurePackageFullyLoaded(Package);
 		Package->MarkPackageDirty();
 
 		const FString FileName = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
@@ -56,6 +72,7 @@ namespace
 	UBlueprint* GetOrCreateBlueprint(UClass* ParentClass, const FString& AssetPath, const FName AssetName)
 	{
 		UPackage* Package = CreatePackage(*AssetPath);
+		EnsurePackageFullyLoaded(Package);
 		if (UBlueprint* Existing = FindObject<UBlueprint>(Package, *AssetName.ToString()))
 		{
 			return Existing;
@@ -114,10 +131,8 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildSentinelStateTree()
 	// 巡逻 → 追击：看见敌人事件（感知 → AIC 发送）
 	Patrol.AddTransition(EStateTreeTransitionTrigger::OnEvent, FCyberRuinNativeTags::Get().EnemySeen, EStateTreeTransitionType::GotoState, &Chase);
 
-	// 追击 → 巡逻：丢失目标 / 离家过远（哨兵 15m leash）/ 目标为空兜底
+	// 追击 → 巡逻：丢失目标 / 目标为空兜底（不限距离追击：不做离家折返，追到真看不见为止）
 	Chase.AddTransition(EStateTreeTransitionTrigger::OnEvent, FCyberRuinNativeTags::Get().EnemyLost, EStateTreeTransitionType::GotoState, &Patrol);
-	FStateTreeTransition& ChaseTooFar = Chase.AddTransition(EStateTreeTransitionTrigger::OnTick, EStateTreeTransitionType::GotoState, &Patrol);
-	ChaseTooFar.AddConditionWithOuter<FStateTreeIsFarFromHomeCondition>(&Chase).GetInstanceData().MaxDistance = 1500.f;
 	Chase.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Patrol);
 
 	// 解卡 → 回巡逻
@@ -199,6 +214,37 @@ UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildSentinelEnemyPawn(UBlueprint* 
 	if (APawn* PawnCDO = Cast<APawn>(EnemyBP->GeneratedClass->GetDefaultObject()))
 	{
 		PawnCDO->AIControllerClass = Cast<UClass>(InAICBlueprint->GeneratedClass);
+	}
+
+	// 默认值：实体外观（哨兵出厂自带骨骼网格体，不再只是碰撞胶囊）
+	// 玩家默认是 SKM_Quinn_Simple，哨兵用 SKM_Manny_Simple 天然区分敌我；动画复用项目 ABP_Unarmed
+	if (ACharacter* EnemyCharCDO = Cast<ACharacter>(EnemyBP->GeneratedClass->GetDefaultObject()))
+	{
+		USkeletalMeshComponent* EnemyMesh = EnemyCharCDO->GetMesh();
+		USkeletalMesh* SentinelMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
+		UBlueprint* AnimBP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed"));
+		if (EnemyMesh && SentinelMesh && AnimBP && AnimBP->GeneratedClass)
+		{
+			EnemyMesh->SetSkeletalMesh(SentinelMesh, false);
+			EnemyMesh->SetAnimInstanceClass(Cast<UClass>(AnimBP->GeneratedClass));
+
+			// 对齐胶囊体：复制模板角色 BP_ThirdPersonCharacter 的 Mesh 相对变换（Z 下移 + 朝向偏转），避免半截埋地/悬浮
+			if (UBlueprint* TemplateCharBP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter")))
+			{
+				if (const ACharacter* TemplateCDO = Cast<ACharacter>(TemplateCharBP->GeneratedClass->GetDefaultObject()))
+				{
+					if (const USkeletalMeshComponent* TemplateMesh = TemplateCDO->GetMesh())
+					{
+						EnemyMesh->SetRelativeLocation(TemplateMesh->GetRelativeLocation(), false);
+						EnemyMesh->SetRelativeRotation(TemplateMesh->GetRelativeRotation(), false);
+					}
+				}
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] 缺少 SKM_Manny_Simple 或 ABP_Unarmed，哨兵将没有实体外观"));
+		}
 	}
 
 	FKismetEditorUtilities::CompileBlueprint(EnemyBP);

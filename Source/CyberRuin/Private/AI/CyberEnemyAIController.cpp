@@ -73,6 +73,12 @@ void ACyberEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAISt
 	CurrentTarget = Actor;
 	bCanSeeTarget = Stimulus.WasSuccessfullySensed();
 
+	UE_LOG(LogTemp, Display, TEXT("[Perception] %s %s %s（距离 %.0fcm）"),
+		*GetNameSafe(GetPawn()),
+		bCanSeeTarget ? TEXT("看见") : TEXT("丢失"),
+		*GetNameSafe(Actor),
+		Actor ? FVector::Dist(GetPawn() ? GetPawn()->GetActorLocation() : FVector::ZeroVector, Actor->GetActorLocation()) : -1.f);
+
 	if (!StateTreeComp)
 	{
 		return;

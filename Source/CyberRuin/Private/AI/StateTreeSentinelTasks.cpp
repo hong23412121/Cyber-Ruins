@@ -16,6 +16,17 @@ namespace
 		return AI && AI->GetPathFollowingComponent()
 			&& AI->GetPathFollowingComponent()->GetStatus() == EPathFollowingStatus::Moving;
 	}
+
+	/** MoveToActor 结果转文案（诊断日志用） */
+	const TCHAR* PathRequestResultText(EPathFollowingRequestResult::Type Result)
+	{
+		switch (Result)
+		{
+		case EPathFollowingRequestResult::Type::AlreadyAtGoal: return TEXT("AlreadyAtGoal");
+		case EPathFollowingRequestResult::Type::Failed: return TEXT("Failed");
+		default: return TEXT("Moving");
+		}
+	}
 }
 
 // ---------------- 取巡逻点 ----------------
@@ -79,6 +90,7 @@ EStateTreeRunStatus FStateTreePatrolMoveTask::EnterState(FStateTreeExecutionCont
 	UPatrolRouteComponent* Route = Pawn ? Pawn->FindComponentByClass<UPatrolRouteComponent>() : nullptr;
 	if (!Route)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[Patrol] %s 没挂 PatrolRouteComponent，巡逻状态失败"), *GetNameSafe(Pawn));
 		return EStateTreeRunStatus::Failed; // 没挂巡逻组件：状态失败，转换兜底
 	}
 
@@ -91,7 +103,14 @@ EStateTreeRunStatus FStateTreePatrolMoveTask::EnterState(FStateTreeExecutionCont
 	}
 	if (Point)
 	{
-		InstanceData.AIController->MoveToActor(Point, InstanceData.AcceptanceRadius);
+		const EPathFollowingRequestResult::Type Result =
+			InstanceData.AIController->MoveToActor(Point, InstanceData.AcceptanceRadius);
+		UE_LOG(LogTemp, Display, TEXT("[Patrol] %s EnterState → %s MoveTo=%s（路线共 %d 点）"),
+			*GetNameSafe(Pawn), *GetNameSafe(Point), PathRequestResultText(Result), Route->Points.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Patrol] %s EnterState：路线为空（%d 点），站桩待命"), *GetNameSafe(Pawn), Route->Points.Num());
 	}
 	return EStateTreeRunStatus::Running;
 }
@@ -117,7 +136,10 @@ EStateTreeRunStatus FStateTreePatrolMoveTask::Tick(FStateTreeExecutionContext& C
 
 		if (AActor* NextPoint = Route->GetCurrentPoint())
 		{
-			AI->MoveToActor(NextPoint, InstanceData.AcceptanceRadius);
+			const EPathFollowingRequestResult::Type Result =
+				AI->MoveToActor(NextPoint, InstanceData.AcceptanceRadius);
+			UE_LOG(LogTemp, Display, TEXT("[Patrol] %s 换点 → %s MoveTo=%s"),
+				*GetNameSafe(AI->GetPawn()), *GetNameSafe(NextPoint), PathRequestResultText(Result));
 		}
 	}
 	return EStateTreeRunStatus::Running;

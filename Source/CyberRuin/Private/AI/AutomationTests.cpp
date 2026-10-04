@@ -72,8 +72,9 @@ bool FCyberRuinPatrolPingPongTest::RunTest(const FString& Parameters)
 	RouteSingle->Advance();
 	TestTrue(TEXT("单点恒定"), RouteSingle->GetCurrentPoint() == P0);
 
-	// 无路线：返回空
+	// 无路线：返回空（关掉自动抓点，专测纯空路线语义；惰性补抓在实关另有验证）
 	UPatrolRouteComponent* RouteEmpty = NewObject<UPatrolRouteComponent>(World);
+	RouteEmpty->bAutoCollectNearbyPoints = false;
 	RouteEmpty->Advance();
 	TestNull(TEXT("无路线→空"), RouteEmpty->GetCurrentPoint());
 
