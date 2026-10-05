@@ -69,6 +69,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "蜂群")
 	float WallLookAhead = 160.f; // 避墙探测距离
 
+	/** 低障碍翻越高度：障碍顶低于无人机此高度内 → 向上翻越（箱子可翻）；高于它 → 视为墙顺墙绕行 */
+	UPROPERTY(EditAnywhere, Category = "蜂群")
+	float ClimbOverHeight = 300.f;
+
 	UPROPERTY(EditAnywhere, Category = "蜂群")
 	float HoverZ = 150.f; // 距地悬停高度
 

@@ -148,3 +148,37 @@ struct CYBERRUIN_API FStateTreeWarpUnstuckTask : public FStateTreeAITaskBase
 
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 };
+
+/** 待机任务的实例数据 */
+USTRUCT()
+struct CYBERRUIN_API FStateTreeIdleTaskInstanceData
+{
+	GENERATED_BODY()
+
+	/** 由 AI Schema 自动绑定的上下文 */
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	/** 原地扫描角速度(度/秒)：0 = 完全站桩不转 */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float ScanDegreesPerSecond = 60.f;
+};
+
+/**
+ * 原地待机：停移动、原地慢速扫描（等视野锥扫到目标），保持 Running 等事件转换切走。
+ * 审计官移动桩的"索敌待机"态用（§九：审计官行为不进 StateTree，此处仅测试其感知→移动链路）。
+ */
+USTRUCT(Meta = (DisplayName = "待机 (Idle)", Category = "AI|Common"))
+struct CYBERRUIN_API FStateTreeIdleTask : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeIdleTaskInstanceData;
+
+	FStateTreeIdleTask();
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+};

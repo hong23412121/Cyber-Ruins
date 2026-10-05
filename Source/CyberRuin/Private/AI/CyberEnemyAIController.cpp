@@ -70,6 +70,14 @@ void ACyberEnemyAIController::OnPossess(APawn* InPawn)
 
 void ACyberEnemyAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 {
+	// 敌我过滤（方案 §11 集成约束）：怪只把玩家当目标，怪与怪互不触发追击/绕后，
+	// 否则哨兵会去追掠食者、掠食者绕到哨兵背后——测试关卡多怪同屏时尤其致命
+	const APawn* SensedPawn = Cast<APawn>(Actor);
+	if (!SensedPawn || !SensedPawn->IsPlayerControlled())
+	{
+		return;
+	}
+
 	CurrentTarget = Actor;
 	bCanSeeTarget = Stimulus.WasSuccessfullySensed();
 

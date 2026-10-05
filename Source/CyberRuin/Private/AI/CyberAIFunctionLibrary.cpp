@@ -68,18 +68,25 @@ bool UCyberAIFunctionLibrary::GetFlankPoint(const AActor* Target, float FlankDis
 		return false;
 	}
 
-	// 目标背后扇形上均匀取 7 个候选，投影到导航网格，取第一个成功的（背后死角优先）
+	// 目标背后扇形上取 7 个候选：从正背后（180°）中心向外对称外扩，投影到导航网格，
+	// 取第一个成功的（背后死角优先）。注意 SampleArcDegrees 是半弧：取样范围 180°±SampleArcDegrees。
 	const FVector TargetLocation = Target->GetActorLocation();
 	const FVector Facing = Target->GetActorForwardVector().GetSafeNormal2D();
 	const float HalfArc = FMath::Max(SampleArcDegrees, 1.f);
 
 	for (int32 CandidateIndex = 0; CandidateIndex < 7; ++CandidateIndex)
 	{
-		const float Degrees = 180.f - HalfArc + (2.f * HalfArc / 6.f) * CandidateIndex;
+		// 顺序：0°→±1/3 弧→±2/3 弧→±整弧，正背后永远最先试
+		const int32 Ring = (CandidateIndex + 1) / 2;
+		const float Sign = (CandidateIndex % 2 == 0) ? 1.f : -1.f;
+		const float Degrees = 180.f + Sign * Ring * (HalfArc / 3.f);
 		const FVector Candidate = TargetLocation + Facing.RotateAngleAxis(Degrees, FVector::UpVector).GetSafeNormal2D() * FlankDistance;
 
 		FNavLocation Out;
-		if (NavSys->ProjectPointToNavigation(Candidate, Out))
+		// 投影距离校验：投影点离候选 >150cm 说明被墙/箱子挤到了障碍另一侧的 navmesh（穿墙投影），
+		// 走过去必然绕大圈甚至贴墙卡住——弃用，换下一个候选
+		if (NavSys->ProjectPointToNavigation(Candidate, Out)
+			&& FVector::Dist2D(Out.Location, Candidate) <= 150.f)
 		{
 			OutPoint = Out.Location;
 			return true;

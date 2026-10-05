@@ -47,6 +47,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "AI")
 	bool bCanSeeTarget = false;
 
+	/** 裁决者护盾是否已破（Gameplay 层破盾时写 true；守盾警戒状态据此放行追杀转换） */
+	UPROPERTY(BlueprintReadWrite, Category = "AI")
+	bool bShieldBroken = false;
+
+	/** 测试用：守盾警戒时玩家持续贴近开火将自动破盾（真破盾事件由 Gameplay 层接手后置 false） */
+	UPROPERTY(EditAnywhere, Category = "AI|Debug")
+	bool bDebugAutoBreakShield = false;
+
 	/** 冻结行为（过场动画/教学暂停）：StateTree 暂停（保留状态）+ 停止移动 */
 	UFUNCTION(BlueprintCallable, Category = "AI")
 	void FreezeLogic();

@@ -233,3 +233,41 @@ EStateTreeRunStatus FStateTreeWarpUnstuckTask::EnterState(FStateTreeExecutionCon
 		? EStateTreeRunStatus::Succeeded
 		: EStateTreeRunStatus::Running;
 }
+
+// ---------------- 待机 ----------------
+
+FStateTreeIdleTask::FStateTreeIdleTask()
+{
+	bShouldCallTick = true;
+	bShouldCopyBoundPropertiesOnTick = false;
+	bShouldCopyBoundPropertiesOnExitState = false;
+}
+
+EStateTreeRunStatus FStateTreeIdleTask::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	if (!InstanceData.AIController)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	InstanceData.AIController->StopMovement();
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeIdleTask::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	APawn* Pawn = InstanceData.AIController ? InstanceData.AIController->GetPawn() : nullptr;
+	if (!Pawn)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 原地慢速扫描：出生朝向固定的话感知锥永远扫不到背后，站着=瞎子
+	if (InstanceData.ScanDegreesPerSecond > 0.f)
+	{
+		Pawn->AddActorWorldRotation(FRotator(0.f, InstanceData.ScanDegreesPerSecond * DeltaTime, 0.f));
+	}
+	return EStateTreeRunStatus::Running;
+}

@@ -26,6 +26,8 @@ void ASwarmHive::SpawnDrones()
 	UWorld* World = GetWorld();
 	if (!World || !DroneClass)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[蜂群] %s 无法铺无人机（%s）"), *GetNameSafe(this),
+			!World ? TEXT("无 World") : TEXT("DroneClass 未指定"));
 		return;
 	}
 
@@ -46,6 +48,8 @@ void ASwarmHive::SpawnDrones()
 			Drones.Add(Drone);
 		}
 	}
+	UE_LOG(LogTemp, Display, TEXT("[蜂群] %s 铺开 %d/%d 只无人机（锚点 %s，封锁半径 %.0fcm）"),
+		*GetNameSafe(this), Drones.Num(), DroneCount, *Anchor.ToCompactString(), GuardRadius);
 }
 
 void ASwarmHive::Alert(float AlertSeconds)
@@ -99,7 +103,13 @@ void ASwarmHive::Tick(float DeltaSeconds)
 
 	// 核心规则：蹲行 = 对蜂群隐身；墙后断视线 = 脱离封锁；被哨兵点名 = 无视前两条
 	const bool bEngage = bAlerted || (bInZone && !bCrouched && bAnchorLOS);
-	CurrentState = bEngage ? ESwarmState::Engage : ESwarmState::Idle;
+	const ESwarmState NewState = bEngage ? ESwarmState::Engage : ESwarmState::Idle;
+	if (NewState != CurrentState)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[蜂群] %s %s"), *GetNameSafe(this),
+			NewState == ESwarmState::Engage ? TEXT("转入 Engage：站立玩家进入封锁圈") : TEXT("转回 Idle：脱离封锁圈/蹲行隐身/断视线"));
+		CurrentState = NewState;
+	}
 
 	const FVector Target = (bEngage && Player)
 		? Player->GetActorLocation() + FVector(0.f, 0.f, 160.f) // 悬在头顶一圈
@@ -152,13 +162,32 @@ void ASwarmHive::SteerAll(float DeltaTime, const FVector& Target, float Speed)
 			Steer += (Center / Neighbors - Drone->GetActorLocation()).GetSafeNormal() * 0.5f;  // 聚合
 		}
 
-		// ---- 避墙射线：提前转向的"顺滑层"；防穿墙硬保证在下方 sweep 移动 ----
-		FHitResult AvoidHit;
-		const FVector TraceEnd = Drone->GetActorLocation() + Drone->Vel.GetSafeNormal() * WallLookAhead;
-		if (World->LineTraceSingleByChannel(AvoidHit, Drone->GetActorLocation(), TraceEnd, ECC_Visibility)
-			&& AvoidHit.Normal.Z < 0.7f) // 忽略地面/坡面，只躲竖直墙
+		// ---- 避墙射线：沿"想去方向"探测（贴墙后速度被抹平时仍能探到前方障碍）----
+		// 低障碍（箱子级）= 向上翻越（无人机会飞，别趴在箱子面上）；高墙 = 顺墙侧绕
+		FVector DesiredDir = (Target - Drone->GetActorLocation()).GetSafeNormal();
+		if (DesiredDir.IsNearlyZero())
 		{
-			Steer += AvoidHit.Normal.GetSafeNormal2D() * 2.5f;
+			DesiredDir = Drone->Vel.GetSafeNormal();
+		}
+		FHitResult AvoidHit;
+		const FVector TraceStart = Drone->GetActorLocation();
+		const FVector TraceEnd = TraceStart + DesiredDir * WallLookAhead;
+		if (DesiredDir.SizeSquared() > 0.01f
+			&& World->LineTraceSingleByChannel(AvoidHit, TraceStart, TraceEnd, ECC_Visibility)
+			&& AvoidHit.Normal.Z < 0.7f) // 忽略地面/坡面，只躲竖直面
+		{
+			const float ObstacleTop = AvoidHit.GetActor()
+				? AvoidHit.GetActor()->GetComponentsBoundingBox().Max.Z
+				: AvoidHit.ImpactPoint.Z;
+			if (ObstacleTop - TraceStart.Z < ClimbOverHeight)
+			{
+				// 低障碍：抬升翻越（主修正——蜂群被箱子挡住的根因修复）
+				Steer += (DesiredDir + FVector::UpVector * 1.6f).GetSafeNormal() * 3.f;
+			}
+			else
+			{
+				Steer += AvoidHit.Normal.GetSafeNormal2D() * 2.5f;
+			}
 		}
 
 		Drone->Vel = (Drone->Vel + Steer * DeltaTime * 900.f).GetClampedToMaxSize(Speed);
@@ -170,6 +199,15 @@ void ASwarmHive::SteerAll(float DeltaTime, const FVector& Target, float Speed)
 		{
 			// 贴墙滑动：速度投影到墙面切线继续走 + 轻微离墙推力，避免"趴墙抖动"
 			Drone->Vel = FVector::VectorPlaneProject(Drone->Vel, MoveHit.Normal) + MoveHit.Normal * 50.f;
+
+			// 撞上的若是低障碍：额外抬升助力，确保翻过去而不是反复撞击
+			const float BlockTop = MoveHit.GetActor()
+				? MoveHit.GetActor()->GetComponentsBoundingBox().Max.Z
+				: MoveHit.ImpactPoint.Z;
+			if (BlockTop - Drone->GetActorLocation().Z < ClimbOverHeight)
+			{
+				Drone->Vel.Z += 350.f;
+			}
 		}
 	}
 }

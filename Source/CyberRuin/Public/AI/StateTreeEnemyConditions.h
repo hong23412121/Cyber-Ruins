@@ -63,3 +63,89 @@ struct CYBERRUIN_API FStateTreeIsFarFromHomeCondition : public FStateTreeConditi
 
 	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
 };
+
+/** 有目标条件的实例数据 */
+USTRUCT()
+struct CYBERRUIN_API FStateTreeHasTargetConditionInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+};
+
+/**
+ * 有目标判断：AIC 的 CurrentTarget 非空即通过。
+ * 掠食者索敌漫游重咬目标（背刺/游走结束后目标还在视野记忆里 → 立即再绕后）。
+ */
+USTRUCT(Meta = (DisplayName = "有目标 (Has Target)", Category = "AI|Common"))
+struct CYBERRUIN_API FStateTreeHasTargetCondition : public FStateTreeConditionBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeHasTargetConditionInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+/** 被玩家察觉条件的实例数据 */USTRUCT()
+struct CYBERRUIN_API FStateTreeIsSpottedConditionInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	/** 玩家多近内回头可见即算"被察觉"(cm) */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float SpotRadius = 1200.f;
+
+	/** 玩家视线半角(度)：视线锥内即被察觉 */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float SpotHalfAngleDegrees = 60.f;
+};
+
+/**
+ * 被玩家察觉判断（方案 §11.3 掠食者"被察觉"触发）：
+ * 玩家在 SpotRadius 内、视线无遮挡、且怪处在玩家视线锥内 → 通过。
+ * 用于掠食者绕后途中被玩家扭头看见 → 转"被发现"游走。
+ */
+USTRUCT(Meta = (DisplayName = "被玩家察觉 (Is Spotted)", Category = "AI|Predator"))
+struct CYBERRUIN_API FStateTreeIsSpottedCondition : public FStateTreeConditionBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeIsSpottedConditionInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+/** 护盾已破条件的实例数据 */
+USTRUCT()
+struct CYBERRUIN_API FStateTreeIsShieldBrokenConditionInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+};
+
+/**
+ * 护盾已破判断（方案 §11.4 裁决者）：读 AIC 的 bShieldBroken（Gameplay 层破盾时写入）。
+ * 用于裁决者守盾警戒 → 追杀的事件转换门槛：盾没破看见也不追。
+ */
+USTRUCT(Meta = (DisplayName = "护盾已破 (Is Shield Broken)", Category = "AI|Arbiter"))
+struct CYBERRUIN_API FStateTreeIsShieldBrokenCondition : public FStateTreeConditionBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeIsShieldBrokenConditionInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
