@@ -98,19 +98,24 @@ struct CYBERRUIN_API FStateTreeIsSpottedConditionInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController = nullptr;
 
-	/** 玩家多近内回头可见即算"被察觉"(cm) */
+	/** 玩家多近内角色面朝它即算"被察觉"(cm) */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float SpotRadius = 1200.f;
 
-	/** 玩家视线半角(度)：视线锥内即被察觉 */
+	/** 玩家视线半角(度)：以角色朝向为轴的视线锥内即被察觉（绑角色不绑相机） */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float SpotHalfAngleDegrees = 60.f;
+
+	/** 贴身锁定距离：玩家与怪距离小于此值时不判被察觉（背刺扑击发动后转身面对也拦不住，只有走位能躲）；0 = 不启用 */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float MinDistance = 0.f;
 };
 
 /**
  * 被玩家察觉判断（方案 §11.3 掠食者"被察觉"触发）：
- * 玩家在 SpotRadius 内、视线无遮挡、且怪处在玩家视线锥内 → 通过。
- * 用于掠食者绕后途中被玩家扭头看见 → 转"被发现"游走。
+ * 玩家在 SpotRadius 内、视线无遮挡、且怪处在**角色朝向**为轴的视线锥内 → 通过（绑角色不绑相机——
+ * 第三人称里镜头回头看它不算"看见"，转身脸朝它才算，与背刺"背后 90° 扇形"判定源一致）。
+ * 用于掠食者绕后途中被玩家转身看见 → 转"被发现"撤离。
  */
 USTRUCT(Meta = (DisplayName = "被玩家察觉 (Is Spotted)", Category = "AI|Predator"))
 struct CYBERRUIN_API FStateTreeIsSpottedCondition : public FStateTreeConditionBase

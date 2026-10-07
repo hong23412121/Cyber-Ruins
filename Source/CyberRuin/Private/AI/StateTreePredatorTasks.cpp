@@ -190,9 +190,10 @@ EStateTreeRunStatus FStateTreePredatorBackstabTask::Tick(FStateTreeExecutionCont
 
 	if (bInRange && bBehind)
 	{
-		// 大伤害结算由 Gameplay 层挂钩（BPI_Damageable），测试期先打日志
+		// 大伤害结算由 Gameplay 层挂钩（BPI_Damageable），测试期打日志 + 灰盒背刺动画
 		UE_LOG(LogTemp, Warning, TEXT("[掠食者] %s 背刺命中 %s！距离 %.0fcm"),
 			*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Distance);
+		EnemyAIC->PlayPrimaryAction();
 		return EStateTreeRunStatus::Succeeded;
 	}
 
@@ -220,7 +221,7 @@ EStateTreeRunStatus FStateTreePredatorSpottedTask::EnterState(FStateTreeExecutio
 	InstanceData.Elapsed = 0.f;
 	InstanceData.LastRequestTime = -1.f;
 
-	UE_LOG(LogTemp, Display, TEXT("[掠食者] %s 被玩家察觉！环玩家游走 %.1f 秒后撤离"),
+	UE_LOG(LogTemp, Display, TEXT("[掠食者] %s 被玩家察觉！掉头撤离 %.1f 秒后重新找时机"),
 		*GetNameSafe(InstanceData.AIController ? InstanceData.AIController->GetPawn() : nullptr), InstanceData.WanderSeconds);
 	return EStateTreeRunStatus::Running;
 }
@@ -239,14 +240,17 @@ EStateTreeRunStatus FStateTreePredatorSpottedTask::Tick(FStateTreeExecutionConte
 	InstanceData.Elapsed += DeltaTime;
 	if (InstanceData.Elapsed >= InstanceData.WanderSeconds)
 	{
-		UE_LOG(LogTemp, Display, TEXT("[掠食者] %s 游走完毕，撤回索敌漫游"), *GetNameSafe(EnemyAIC->GetPawn()));
+		UE_LOG(LogTemp, Display, TEXT("[掠食者] %s 撤离完毕，回索敌漫游再找时机"), *GetNameSafe(EnemyAIC->GetPawn()));
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// 环玩家游走：到达/走不通冷却后取下一个环带点
+	// 掉头撤离：沿"玩家→掠食者"方向再退 WanderRadius~2×WanderRadius（重取点时方向随位置刷新）。
+	// 原版围着玩家转圈游走，观感上就是"在离我不远的地方晃悠还不来偷背"——被看见的正确观感是逃走另找时机
 	if (!IsMoveActive(InstanceData.AIController.Get()) && World->GetTimeSeconds() - InstanceData.LastRequestTime > 0.5f)
 	{
-		const FVector Point = RandomRingPoint(Target->GetActorLocation(), InstanceData.WanderRadius * 0.5f, InstanceData.WanderRadius);
+		const FVector AwayDir = (EnemyAIC->GetPawn()->GetActorLocation() - Target->GetActorLocation()).GetSafeNormal2D();
+		const FVector Point = EnemyAIC->GetPawn()->GetActorLocation()
+			+ AwayDir * FMath::FRandRange(InstanceData.WanderRadius, InstanceData.WanderRadius * 2.f);
 		EnemyAIC->MoveToLocation(Point, 100.f, true, true, true);
 		InstanceData.LastRequestTime = World->GetTimeSeconds();
 	}

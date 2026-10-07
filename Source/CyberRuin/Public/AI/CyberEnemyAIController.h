@@ -6,6 +6,9 @@
 #include "CyberEnemyAIController.generated.h"
 
 class UAIPerceptionComponent;
+class UAnimSequence;
+class UBlendSpace;
+class UAnimSingleNodeInstance;
 class UStateTree;
 class UStateTreeAIComponent;
 
@@ -30,6 +33,7 @@ public:
 	ACyberEnemyAIController();
 
 	virtual void OnPossess(APawn* InPawn) override;
+	virtual void Tick(float DeltaSeconds) override;
 
 	/** 怪物行为 StateTree 资产：哨兵/掠食者/裁决者各指定自己的（ST_Sentinel / ST_Predator / ST_Arbiter） */
 	UPROPERTY(EditAnywhere, Category = "AI")
@@ -63,6 +67,34 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI")
 	void UnfreezeLogic();
 
+	/** 灰盒表现：主行动动画一次性播放（掠食者=背刺击 / 裁决者=开火），播完自动恢复跑动混合 */
+	UFUNCTION(BlueprintCallable, Category = "表现")
+	void PlayPrimaryAction();
+
+	/** 灰盒表现：受击表现（裁决者护盾被破等），播完自动恢复跑动混合 */
+	UFUNCTION(BlueprintCallable, Category = "表现")
+	void PlayHitReact();
+
+	/** 是否有一次性动作正在播放（裁决者开火节流用） */
+	UFUNCTION(BlueprintPure, Category = "表现")
+	bool IsActionPlaying() const { return ActionRemaining > 0.f; }
+
+	/** 灰盒步态：单节点跑动混合空间（空 = 网格走 ABP 路线，本类不做动画驱动） */
+	UPROPERTY(EditAnywhere, Category = "表现")
+	TObjectPtr<UBlendSpace> LocomotionBlendSpace;
+
+	/** 灰盒步态播放速率（裁决者 0.8 沉重 / 掠食者 0.9 鬼祟 / 默认 1.0） */
+	UPROPERTY(EditAnywhere, Category = "表现")
+	float LocomotionPlayRate = 1.f;
+
+	/** 主行动动画（掠食者背刺 / 裁决者开火），由 PlayPrimaryAction 播 */
+	UPROPERTY(EditAnywhere, Category = "表现")
+	TObjectPtr<UAnimSequence> PrimaryActionAnim;
+
+	/** 受击动画（破盾等），由 PlayHitReact 播 */
+	UPROPERTY(EditAnywhere, Category = "表现")
+	TObjectPtr<UAnimSequence> HitReactAnim;
+
 protected:
 	UPROPERTY(VisibleAnywhere, Category = "AI")
 	TObjectPtr<UStateTreeAIComponent> StateTreeComp;
@@ -75,4 +107,11 @@ private:
 	/** "看见敌人"事件载荷（成员存续，避免悬垂视图） */
 	UPROPERTY()
 	FStateTreeEnemySeenPayload SeenPayload;
+
+	/** 一次性动作剩余时长（>0 = 动作播放中，Tick 里倒数归零后恢复跑动混合） */
+	float ActionRemaining = 0.f;
+
+	USkeletalMeshComponent* GetEnemyMesh() const;
+	UAnimSingleNodeInstance* GetSingleNodeAnim() const;
+	void PlayOneShot(UAnimSequence* Anim);
 };

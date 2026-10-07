@@ -172,6 +172,10 @@ void ASwarmHive::SteerAll(float DeltaTime, const FVector& Target, float Speed)
 		FHitResult AvoidHit;
 		const FVector TraceStart = Drone->GetActorLocation();
 		const FVector TraceEnd = TraceStart + DesiredDir * WallLookAhead;
+		// 翻越记忆：机身高过箱顶后水平射线就不再命中箱面（升力会瞬间消失），
+		// 而朝低处目标的转向此时指向前下方 → 机身在顶棱高度俯冲撞回箱面，观感即"翻箱不够高"。
+		// 爬到 箱顶+ClimbClearance 之前记忆顶住升力不撤，干净跨过顶棱才改平。
+		bool bClimbing = Drone->ClimbFloorZ > TraceStart.Z;
 		if (DesiredDir.SizeSquared() > 0.01f
 			&& World->LineTraceSingleByChannel(AvoidHit, TraceStart, TraceEnd, ECC_Visibility)
 			&& AvoidHit.Normal.Z < 0.7f) // 忽略地面/坡面，只躲竖直面
@@ -181,13 +185,24 @@ void ASwarmHive::SteerAll(float DeltaTime, const FVector& Target, float Speed)
 				: AvoidHit.ImpactPoint.Z;
 			if (ObstacleTop - TraceStart.Z < ClimbOverHeight)
 			{
-				// 低障碍：抬升翻越（主修正——蜂群被箱子挡住的根因修复）
-				Steer += (DesiredDir + FVector::UpVector * 1.6f).GetSafeNormal() * 3.f;
+				// 低障碍：抬升翻越（主修正——蜂群被箱子挡住的根因修复），并记下安全改平高度
+				Drone->ClimbFloorZ = FMath::Max(Drone->ClimbFloorZ, ObstacleTop + ClimbClearance);
+				Steer += (DesiredDir + FVector::UpVector * 2.f).GetSafeNormal() * 3.5f;
+				bClimbing = true;
 			}
 			else
 			{
 				Steer += AvoidHit.Normal.GetSafeNormal2D() * 2.5f;
 			}
+		}
+		if (bClimbing)
+		{
+			// 翻越期间持续升力（射线脱靶后顶住不俯冲），比朝向目标的下坠分量强
+			Steer += FVector::UpVector * 2.5f;
+		}
+		else
+		{
+			Drone->ClimbFloorZ = -1.f; // 已过顶改平，清翻越记忆
 		}
 
 		Drone->Vel = (Drone->Vel + Steer * DeltaTime * 900.f).GetClampedToMaxSize(Speed);
@@ -206,7 +221,8 @@ void ASwarmHive::SteerAll(float DeltaTime, const FVector& Target, float Speed)
 				: MoveHit.ImpactPoint.Z;
 			if (BlockTop - Drone->GetActorLocation().Z < ClimbOverHeight)
 			{
-				Drone->Vel.Z += 350.f;
+				Drone->Vel.Z += 450.f;
+				Drone->ClimbFloorZ = FMath::Max(Drone->ClimbFloorZ, BlockTop + ClimbClearance);
 			}
 		}
 	}

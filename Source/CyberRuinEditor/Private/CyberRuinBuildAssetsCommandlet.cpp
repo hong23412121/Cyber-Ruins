@@ -1,4 +1,4 @@
-﻿#include "CyberRuinBuildAssetsCommandlet.h"
+#include "CyberRuinBuildAssetsCommandlet.h"
 
 #include "AI/AntiStuckComponent.h"
 #include "AI/CyberEnemyAIController.h"
@@ -10,6 +10,8 @@
 #include "AI/StateTreeSentinelTasks.h"
 #include "AI/SwarmDrone.h"
 #include "AI/SwarmHive.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/BlendSpace1D.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "Components/StateTreeAIComponentSchema.h"
@@ -21,7 +23,7 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
-#include "GameFramework/CapsuleComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
@@ -249,15 +251,16 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildPredatorStateTree()
 	Reacquire.bDelayTransition = true;
 	Reacquire.DelayDuration = 1.5f;
 
-	// 绕后接近 → 被发现游走：玩家视线锥内看见掠食者（中优先，先于到点判定）
+	// 绕后接近 → 被发现撤离：玩家视线锥内看见掠食者（中优先，先于到点判定）
 	FStateTreeTransition& SpottedFromFlank = Flank.AddTransition(EStateTreeTransitionTrigger::OnTick, EStateTreeTransitionType::GotoState, &Spotted);
 	SpottedFromFlank.Priority = EStateTreeTransitionPriority::Medium;
 	SpottedFromFlank.AddConditionWithOuter<FStateTreeIsSpottedCondition>(&Flank);
 
-	// 贴身背刺 → 被发现游走：贴近途中被玩家扭头看见同样打断
+	// 贴身背刺 → 被发现撤离：贴近途中被玩家转身面对（角色视线锥）同样打断；但已进 300cm = 扑击发动锁定，
+	// 转身也拦不住（只有走位能躲）——否则玩家最后一刻转身永远取消背刺，观感就是"不来偷背"
 	FStateTreeTransition& SpottedFromBackstab = Backstab.AddTransition(EStateTreeTransitionTrigger::OnTick, EStateTreeTransitionType::GotoState, &Spotted);
 	SpottedFromBackstab.Priority = EStateTreeTransitionPriority::Medium;
-	SpottedFromBackstab.AddConditionWithOuter<FStateTreeIsSpottedCondition>(&Backstab);
+	SpottedFromBackstab.AddConditionWithOuter<FStateTreeIsSpottedCondition>(&Backstab).GetInstanceData().MinDistance = 300.f;
 
 	// 绕后接近 → 贴身背刺：到点完成（目标丢失时任务 Failed 也会走这条，背刺无目标即 Failed 兜回漫游）
 	Flank.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Backstab);
@@ -354,7 +357,75 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildAuditorStubStateTree()
 	return CompileStateTree(StateTree, TEXT("ST_AuditorStub"));
 }
 
-UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyAIC(const FString& AssetName, UStateTree* InStateTree, bool bDebugAutoBreakShield)
+UAnimSequence* UCyberRuinBuildAssetsCommandlet::LoadMannequinAnim(const FString& AssetPath)
+{
+	UAnimSequence* Anim = LoadObject<UAnimSequence>(nullptr, *AssetPath);
+	if (!Anim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] 找不到动画 %s，对应动作将不播放"), *AssetPath);
+		return nullptr;
+	}
+
+	// 骨架校验：动画必须与怪壳网格体（SKM_Manny_Simple）同骨架，否则单节点播放会静默失败
+	USkeletalMesh* MannyMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
+	if (MannyMesh && Anim->GetSkeleton() != MannyMesh->GetSkeleton())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] %s 与 SKM_Manny_Simple 骨架不一致，不接入"), *AssetPath);
+		return nullptr;
+	}
+
+	// 叠加动画防线：单节点模式下叠加动画没有基姿态可叠，姿势会错乱（且 cooked 包直接不允许），一律不接入
+	if (Anim->AdditiveAnimType != AAT_None)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] %s 是叠加动画，不适配单节点步态，不接入"), *AssetPath);
+		return nullptr;
+	}
+	return Anim;
+}
+
+UBlendSpace1D* UCyberRuinBuildAssetsCommandlet::BuildWalkOnlyBlendSpace(const FString& AssetName, float MaxSpeed)
+{
+	// 纯走步态（方案 §十四：小怪整体步行不出现跑步）：
+	// MM_Idle 驻零速端点 + MF_Unarmed_Walk_Fwd 铺到 MaxSpeed——AddSample 自带 ExpandRangeForSample
+	// 会把混合范围从默认 [0,100] 扩到覆盖 MaxSpeed；速度超 MaxSpeed 被钳在末样本（观感=加快步频）
+	UAnimSequence* IdleAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle"));
+	UAnimSequence* WalkAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Walk/MF_Unarmed_Walk_Fwd"));
+	USkeletalMesh* MannyMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
+	if (!IdleAnim || !WalkAnim || !MannyMesh || !MannyMesh->GetSkeleton())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[CyberRuinBuildAssets] 建 %s 失败：缺 MM_Idle / MF_Unarmed_Walk_Fwd / SKM_Manny_Simple"), *AssetName);
+		return nullptr;
+	}
+
+	UBlendSpace1D* BlendSpace = GetOrCreateAsset<UBlendSpace1D>(FString::Printf(TEXT("/Game/XuTang/%s"), *AssetName), *AssetName);
+	if (!BlendSpace)
+	{
+		return nullptr;
+	}
+
+	// 骨架先挂对（AddSample 内部会校验动画骨架与混合空间骨架一致，不一致直接拒收）
+	if (BlendSpace->GetSkeleton() != MannyMesh->GetSkeleton())
+	{
+		BlendSpace->SetSkeleton(MannyMesh->GetSkeleton());
+	}
+
+	// 幂等重建：清空旧样本（含上次参数残留），再按本参数重铺
+	while (BlendSpace->GetNumberOfBlendSamples() > 0)
+	{
+		BlendSpace->DeleteSample(0);
+	}
+	// 注意 FVector(MaxSpeed) 是三分量全填（=(500,500,500)）会把样本撑成 3 维混合空间，必须显式只填 X
+	BlendSpace->AddSample(IdleAnim, FVector(0.f));
+	BlendSpace->AddSample(WalkAnim, FVector(MaxSpeed, 0.f, 0.f));
+	BlendSpace->ValidateSampleData();
+	BlendSpace->ResampleData();
+
+	UE_LOG(LogTemp, Display, TEXT("[CyberRuinBuildAssets] %s 建成：走速轴 0~%.0f，样本 %d 个"),
+		*AssetName, MaxSpeed, BlendSpace->GetNumberOfBlendSamples());
+	return BlendSpace;
+}
+
+UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyAIC(const FString& AssetName, UStateTree* InStateTree, bool bDebugAutoBreakShield, const FMonsterVisuals& Visuals)
 {
 	UBlueprint* AICBlueprint = GetOrCreateBlueprint(
 		ACyberEnemyAIController::StaticClass(), FString::Printf(TEXT("/Game/XuTang/%s"), *AssetName), *AssetName);
@@ -364,17 +435,21 @@ UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyAIC(const FString& AssetN
 		return nullptr;
 	}
 
-	// 默认值：指定 StateTree 资产 + 调试自动破盾开关（裁决者测试用）
+	// 默认值：指定 StateTree 资产 + 调试自动破盾开关（裁决者测试用）+ 灰盒表现包（步态/动作动画）
 	if (ACyberEnemyAIController* AICCDO = Cast<ACyberEnemyAIController>(AICBlueprint->GeneratedClass->GetDefaultObject()))
 	{
 		AICCDO->EnemyStateTree = InStateTree;
 		AICCDO->bDebugAutoBreakShield = bDebugAutoBreakShield;
+		AICCDO->LocomotionBlendSpace = Visuals.LocomotionBlendSpace;
+		AICCDO->LocomotionPlayRate = Visuals.LocomotionPlayRate;
+		AICCDO->PrimaryActionAnim = Visuals.PrimaryActionAnim;
+		AICCDO->HitReactAnim = Visuals.HitReactAnim;
 	}
 	FKismetEditorUtilities::CompileBlueprint(AICBlueprint);
 	return AICBlueprint;
 }
 
-UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyPawn(UBlueprint* InAICBlueprint, const FString& AssetName, float MaxWalkSpeed, bool bAddPatrolRoute, const FString& LabelText, const FColor& LabelColor, float MeshScale)
+UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyPawn(UBlueprint* InAICBlueprint, const FString& AssetName, float MaxWalkSpeed, bool bAddPatrolRoute, const FString& LabelText, const FColor& LabelColor, float MeshScale, UBlendSpace* LocomotionBlendSpace)
 {
 	// 父类 = 洪韵然的 BP_BaseEnemy（Core 框架）
 	UBlueprint* BaseEnemyBP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/Core/BaseClasses/BP_BaseEnemy.BP_BaseEnemy"));
@@ -422,20 +497,39 @@ UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyPawn(UBlueprint* InAICBlu
 
 		// 挤压起跳根治：胶囊默认"可被踩踏"（CanCharacterStepUpOn），怪物互挤时会往对方胶囊上"踏上"一步，
 		// 观感 = 卡住时疯狂起跳，且位移持续让 AntiStuck 永不触发。禁掉怪物间踩踏后，硬卡 3s 由解卡 Warp 兜底接管
+		// （UE5.8 无 SetCanCharacterStepUpOn setter，UPROPERTY 直接赋枚举）
 		if (EnemyCharCDO->GetCapsuleComponent())
 		{
-			EnemyCharCDO->GetCapsuleComponent()->SetCanCharacterStepUpOn(false);
+			EnemyCharCDO->GetCapsuleComponent()->CanCharacterStepUpOn = ECB_No;
 		}
 
 		// 默认值：实体外观（出厂自带骨骼网格体，不再只是碰撞胶囊）
-		// 玩家默认是 SKM_Quinn_Simple，怪用 SKM_Manny_Simple 天然区分敌我；动画复用项目 ABP_Unarmed
+		// 玩家默认是 SKM_Quinn_Simple，怪用 SKM_Manny_Simple 天然区分敌我
 		USkeletalMeshComponent* EnemyMesh = EnemyCharCDO->GetMesh();
 		USkeletalMesh* MannyMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
-		UBlueprint* AnimBP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed"));
-		if (EnemyMesh && MannyMesh && AnimBP && AnimBP->GeneratedClass)
+		if (EnemyMesh && MannyMesh)
 		{
 			EnemyMesh->SetSkeletalMesh(MannyMesh, false);
-			EnemyMesh->SetAnimInstanceClass(Cast<UClass>(AnimBP->GeneratedClass));
+
+			// 步态分支（方案 §十四）：传了专属混合空间 = 单节点模式（AIC Tick 按速度驱动），否则走项目 ABP_Unarmed（哨兵）
+			if (LocomotionBlendSpace)
+			{
+				EnemyMesh->SetAnimInstanceClass(nullptr);
+				EnemyMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+				EnemyMesh->AnimationData.AnimToPlay = LocomotionBlendSpace;
+			}
+			else
+			{
+				UBlueprint* AnimBP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed.ABP_Unarmed"));
+				if (AnimBP && AnimBP->GeneratedClass)
+				{
+					EnemyMesh->SetAnimInstanceClass(Cast<UClass>(AnimBP->GeneratedClass));
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] 找不到 ABP_Unarmed，%s 将没有动画"), *AssetName);
+				}
+			}
 
 			// 对齐胶囊体：复制模板角色 BP_ThirdPersonCharacter 的 Mesh 相对变换（Z 下移 + 朝向偏转），避免半截埋地/悬浮
 			if (UBlueprint* TemplateCharBP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter")))
@@ -455,7 +549,7 @@ UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyPawn(UBlueprint* InAICBlu
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] 缺少 SKM_Manny_Simple 或 ABP_Unarmed，%s 将没有实体外观"), *AssetName);
+			UE_LOG(LogTemp, Warning, TEXT("[CyberRuinBuildAssets] 缺少 SKM_Manny_Simple，%s 将没有实体外观"), *AssetName);
 		}
 	}
 
@@ -529,12 +623,21 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	{
 		return 1;
 	}
-	UBlueprint* SentinelAIC = BuildEnemyAIC(TEXT("BP_AIC_Sentinel"), SentinelTree, false);
+	// 灰盒表现：常规巡逻步。原方案哨兵保持 ABP_Unarmed，但实机发现该 ABP 对 AI Pawn 不产步行姿态（整场平移，
+	// 疑似依赖玩家侧状态；nullrhi 阶段看不见画面所以此前未暴露）——灰盒期四怪统一单节点机制，正式 AnimBP 由模型侧交付时接管
+	UBlendSpace1D* PatrolBS = BuildWalkOnlyBlendSpace(TEXT("BS_Sentinel_Patrol"), 500.f);
+	if (!PatrolBS || !SaveAsset(PatrolBS))
+	{
+		return 1;
+	}
+	FMonsterVisuals SentinelVisuals;
+	SentinelVisuals.LocomotionBlendSpace = PatrolBS;
+	UBlueprint* SentinelAIC = BuildEnemyAIC(TEXT("BP_AIC_Sentinel"), SentinelTree, false, SentinelVisuals);
 	if (!SentinelAIC || !SaveAsset(SentinelAIC))
 	{
 		return 1;
 	}
-	UBlueprint* SentinelPawn = BuildEnemyPawn(SentinelAIC, TEXT("BP_Enemy_Sentinel"), 0.f, true, TEXT("Sentinel"), FColor(200, 200, 255), 1.0f);
+	UBlueprint* SentinelPawn = BuildEnemyPawn(SentinelAIC, TEXT("BP_Enemy_Sentinel"), 0.f, true, TEXT("Sentinel"), FColor(200, 200, 255), 1.0f, PatrolBS);
 	if (!SentinelPawn || !SaveAsset(SentinelPawn))
 	{
 		return 1;
@@ -546,12 +649,22 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	{
 		return 1;
 	}
-	UBlueprint* PredatorAIC = BuildEnemyAIC(TEXT("BP_AIC_Predator"), PredatorTree, false);
+	// 灰盒表现：潜行步态（纯走拉伸到 500，播放 0.9 提速显鬼祟）+ MM_Attack_01 当背刺击动作
+	UBlendSpace1D* ProwlBS = BuildWalkOnlyBlendSpace(TEXT("BS_Predator_Prowl"), 500.f);
+	if (!ProwlBS || !SaveAsset(ProwlBS))
+	{
+		return 1;
+	}
+	FMonsterVisuals PredatorVisuals;
+	PredatorVisuals.LocomotionBlendSpace = ProwlBS;
+	PredatorVisuals.LocomotionPlayRate = 0.9f;
+	PredatorVisuals.PrimaryActionAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01"));
+	UBlueprint* PredatorAIC = BuildEnemyAIC(TEXT("BP_AIC_Predator"), PredatorTree, false, PredatorVisuals);
 	if (!PredatorAIC || !SaveAsset(PredatorAIC))
 	{
 		return 1;
 	}
-	UBlueprint* PredatorPawn = BuildEnemyPawn(PredatorAIC, TEXT("BP_Enemy_Predator"), 420.f, false, TEXT("Predator"), FColor(255, 70, 0), 0.85f);
+	UBlueprint* PredatorPawn = BuildEnemyPawn(PredatorAIC, TEXT("BP_Enemy_Predator"), 420.f, false, TEXT("Predator"), FColor(255, 70, 0), 0.85f, ProwlBS);
 	if (!PredatorPawn || !SaveAsset(PredatorPawn))
 	{
 		return 1;
@@ -563,12 +676,24 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	{
 		return 1;
 	}
-	UBlueprint* ArbiterAIC = BuildEnemyAIC(TEXT("BP_AIC_Arbiter"), ArbiterTree, true);
+	// 灰盒表现：重装步态（纯走拉伸到 500，播放 0.8 减速显沉重）+ MM_Attack_02 当开火。
+	// 破盾受击用 MM_Attack_03 替身：项目 HitReact 全家是叠加动画，单节点模式没有基姿态可叠会姿势错乱（详见 LoadMannequinAnim 防线）
+	UBlendSpace1D* PlodBS = BuildWalkOnlyBlendSpace(TEXT("BS_Arbiter_Plod"), 500.f);
+	if (!PlodBS || !SaveAsset(PlodBS))
+	{
+		return 1;
+	}
+	FMonsterVisuals ArbiterVisuals;
+	ArbiterVisuals.LocomotionBlendSpace = PlodBS;
+	ArbiterVisuals.LocomotionPlayRate = 0.8f;
+	ArbiterVisuals.PrimaryActionAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_02"));
+	ArbiterVisuals.HitReactAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03"));
+	UBlueprint* ArbiterAIC = BuildEnemyAIC(TEXT("BP_AIC_Arbiter"), ArbiterTree, true, ArbiterVisuals);
 	if (!ArbiterAIC || !SaveAsset(ArbiterAIC))
 	{
 		return 1;
 	}
-	UBlueprint* ArbiterPawn = BuildEnemyPawn(ArbiterAIC, TEXT("BP_Enemy_Arbiter"), 0.f, false, TEXT("Arbiter"), FColor(0, 150, 255), 1.3f);
+	UBlueprint* ArbiterPawn = BuildEnemyPawn(ArbiterAIC, TEXT("BP_Enemy_Arbiter"), 0.f, false, TEXT("Arbiter"), FColor(0, 150, 255), 1.3f, PlodBS);
 	if (!ArbiterPawn || !SaveAsset(ArbiterPawn))
 	{
 		return 1;
@@ -580,12 +705,21 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	{
 		return 1;
 	}
-	UBlueprint* AuditorAIC = BuildEnemyAIC(TEXT("BP_AIC_Auditor"), AuditorTree, false);
+	// 灰盒表现：大步流走（纯走 500，播放 0.95）；测试桩无攻击行为，不接动作动画
+	UBlendSpace1D* StrideBS = BuildWalkOnlyBlendSpace(TEXT("BS_Auditor_Stride"), 500.f);
+	if (!StrideBS || !SaveAsset(StrideBS))
+	{
+		return 1;
+	}
+	FMonsterVisuals AuditorVisuals;
+	AuditorVisuals.LocomotionBlendSpace = StrideBS;
+	AuditorVisuals.LocomotionPlayRate = 0.95f;
+	UBlueprint* AuditorAIC = BuildEnemyAIC(TEXT("BP_AIC_Auditor"), AuditorTree, false, AuditorVisuals);
 	if (!AuditorAIC || !SaveAsset(AuditorAIC))
 	{
 		return 1;
 	}
-	UBlueprint* AuditorPawn = BuildEnemyPawn(AuditorAIC, TEXT("BP_Enemy_Auditor"), 0.f, false, TEXT("Auditor"), FColor(220, 0, 255), 1.55f);
+	UBlueprint* AuditorPawn = BuildEnemyPawn(AuditorAIC, TEXT("BP_Enemy_Auditor"), 0.f, false, TEXT("Auditor"), FColor(220, 0, 255), 1.55f, StrideBS);
 	if (!AuditorPawn || !SaveAsset(AuditorPawn))
 	{
 		return 1;

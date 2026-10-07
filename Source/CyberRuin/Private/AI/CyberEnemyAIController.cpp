@@ -1,5 +1,8 @@
 #include "AI/CyberEnemyAIController.h"
 
+#include "Animation/AnimSingleNodeInstance.h"
+#include "Animation/AnimSequence.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/StateTreeAIComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Navigation/CrowdFollowingComponent.h"
@@ -119,4 +122,80 @@ void ACyberEnemyAIController::UnfreezeLogic()
 	{
 		StateTreeComp->ResumeLogic(TEXT("Unfreeze"));
 	}
+}
+
+void ACyberEnemyAIController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// 灰盒单节点动画驱动（走 ABP 的怪如哨兵在此直接返回，零开销）：
+	// 速度 → BlendSpace 混合位置；一次性动作（背刺/开火/受击）播完恢复跑动
+	UAnimSingleNodeInstance* SingleNode = GetSingleNodeAnim();
+	if (!SingleNode)
+	{
+		return;
+	}
+
+	if (ActionRemaining > 0.f)
+	{
+		ActionRemaining -= DeltaSeconds;
+		if (ActionRemaining <= 0.f)
+		{
+			ActionRemaining = 0.f;
+			if (LocomotionBlendSpace)
+			{
+				// 非循环动作播到末尾时引擎自动 SetPlaying(false)（AnimSingleNodeInstanceProxy 非循环分支），
+				// 而 SetAnimationAsset 不会拉回播放状态——不显式 SetPlaying(true)，怪会永远冻在动作末帧姿势平移
+				SingleNode->SetAnimationAsset(LocomotionBlendSpace, true, LocomotionPlayRate);
+				SingleNode->SetPlaying(true);
+				// 立即喂当前速度，避免恢复瞬间闪一帧零速待机
+				const APawn* MyPawn = GetPawn();
+				SingleNode->SetBlendSpacePosition(FVector(MyPawn ? MyPawn->GetVelocity().Size2D() : 0.f, 0.f, 0.f));
+			}
+		}
+		return;
+	}
+
+	if (LocomotionBlendSpace)
+	{
+		const APawn* MyPawn = GetPawn();
+		SingleNode->SetBlendSpacePosition(FVector(MyPawn ? MyPawn->GetVelocity().Size2D() : 0.f, 0.f, 0.f));
+		SingleNode->SetPlayRate(LocomotionPlayRate);
+	}
+}
+
+void ACyberEnemyAIController::PlayPrimaryAction()
+{
+	PlayOneShot(PrimaryActionAnim);
+}
+
+void ACyberEnemyAIController::PlayHitReact()
+{
+	PlayOneShot(HitReactAnim);
+}
+
+USkeletalMeshComponent* ACyberEnemyAIController::GetEnemyMesh() const
+{
+	APawn* MyPawn = GetPawn();
+	return MyPawn ? MyPawn->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+}
+
+UAnimSingleNodeInstance* ACyberEnemyAIController::GetSingleNodeAnim() const
+{
+	USkeletalMeshComponent* EnemyMesh = GetEnemyMesh();
+	return EnemyMesh ? Cast<UAnimSingleNodeInstance>(EnemyMesh->GetAnimInstance()) : nullptr;
+}
+
+void ACyberEnemyAIController::PlayOneShot(UAnimSequence* Anim)
+{
+	// 只对单节点步态的怪生效（哨兵走 ABP，不在此播灰盒动作）；动作未接或上一发没播完则跳过
+	UAnimSingleNodeInstance* SingleNode = GetSingleNodeAnim();
+	if (!SingleNode || !Anim || !LocomotionBlendSpace || ActionRemaining > 0.f)
+	{
+		return;
+	}
+
+	SingleNode->SetAnimationAsset(Anim, false, 1.f);
+	SingleNode->SetPlaying(true);
+	ActionRemaining = Anim->GetPlayLength() + 0.05f;
 }

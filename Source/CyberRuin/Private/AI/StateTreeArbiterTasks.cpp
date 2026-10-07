@@ -78,12 +78,13 @@ EStateTreeRunStatus FStateTreeArbiterGuardTask::Tick(FStateTreeExecutionContext&
 		EnemyAIC->SetFocus(Target);
 		const float Dist = FVector::Dist2D(PawnLoc, Target->GetActorLocation());
 
-		// 射程内开火（大伤害由 Gameplay 层挂钩，测试期节流打日志）
+		// 射程内开火（大伤害由 Gameplay 层挂钩，测试期节流打日志 + 灰盒开火动画）
 		if (Dist <= InstanceData.FireRange && World->GetTimeSeconds() - InstanceData.LastFireLogTime > 1.f)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("[裁决者] %s 对 %s 开火！距离 %.0fcm（盾未破不追击）"),
 				*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Dist);
 			InstanceData.LastFireLogTime = World->GetTimeSeconds();
+			EnemyAIC->PlayPrimaryAction();
 		}
 
 		// 调试自动破盾：目标持续在射程内可见 → 视为火力压制破盾
@@ -93,6 +94,7 @@ EStateTreeRunStatus FStateTreeArbiterGuardTask::Tick(FStateTreeExecutionContext&
 			if (InstanceData.VisibleAccum >= InstanceData.DebugBreakSeconds)
 			{
 				EnemyAIC->bShieldBroken = true;
+				EnemyAIC->PlayHitReact();
 				UE_LOG(LogTemp, Warning, TEXT("[裁决者] %s 护盾被持续火力击破！转入追杀"),
 					*GetNameSafe(EnemyAIC->GetPawn()));
 			}

@@ -23,6 +23,9 @@ public:
 	/** 当前速度，由 Hive 的蜂群算法驱动 */
 	FVector Vel = FVector::ZeroVector;
 
+	/** 翻越记忆：正在翻的低障碍"安全改平高度"（箱顶+ClimbClearance）；没爬到此高度前 Hive 持续给升力，防止水平射线脱靶后机身在顶棱高度俯冲撞回箱面。<=0 = 未在翻越 */
+	float ClimbFloorZ = -1.f;
+
 	UPROPERTY(VisibleAnywhere, Category = "蜂群")
 	TObjectPtr<USphereComponent> Sphere;
 

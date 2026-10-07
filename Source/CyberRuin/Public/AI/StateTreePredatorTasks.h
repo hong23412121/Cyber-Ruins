@@ -142,15 +142,15 @@ struct CYBERRUIN_API FStateTreePredatorSpottedTaskInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController = nullptr;
 
-	/** 游走时长(秒)：方案 §11.3 初值 3 */
+	/** 撤离时长(秒)：方案 §11.3 初值 3 */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float WanderSeconds = 3.f;
 
-	/** 环玩家游走半径(cm) */
+	/** 撤离距离(cm)：沿"玩家→掠食者"方向退 WanderRadius~2×WanderRadius */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float WanderRadius = 400.f;
 
-	/** 运行期：已游走时长与上次取点时刻 */
+	/** 运行期：已撤离时长与上次取点时刻 */
 	UPROPERTY(Transient)
 	float Elapsed = 0.f;
 
@@ -159,10 +159,11 @@ struct CYBERRUIN_API FStateTreePredatorSpottedTaskInstanceData
 };
 
 /**
- * 被发现游走（方案 §11.3 被发现态）：绕玩家环带游走 WanderSeconds 秒后撤离回索敌漫游；
+ * 被发现掉头撤离（方案 §11.3 被发现态，PIE 反馈修订）：沿"玩家→掠食者"方向退 WanderSeconds 秒后回索敌漫游
+ * 重新找时机；不再围玩家转圈游走（围着转圈在观感上就是"在离我不远的地方晃悠还不来偷背"）。
  * 期间目标丢失 → Failed 兜底。
  */
-USTRUCT(Meta = (DisplayName = "被发现游走 (Predator Spotted)", Category = "AI|Predator"))
+USTRUCT(Meta = (DisplayName = "被发现撤离 (Predator Spotted)", Category = "AI|Predator"))
 struct CYBERRUIN_API FStateTreePredatorSpottedTask : public FStateTreeAITaskBase
 {
 	GENERATED_BODY()
