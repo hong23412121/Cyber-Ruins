@@ -3,6 +3,18 @@
 	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "",
+	"Modules": [
+		{
+			"Name": "CyberRuin",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "CyberRuinEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
 	"Plugins": [
 		{
 			"Name": "ModelingToolsEditorMode",
@@ -13,6 +25,10 @@
 		},
 		{
 			"Name": "GameplayStateTree",
+			"Enabled": true
+		},
+		{
+			"Name": "PythonScriptPlugin",
 			"Enabled": true
 		}
 	]
