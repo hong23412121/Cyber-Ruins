@@ -154,3 +154,66 @@ struct CYBERRUIN_API FStateTreeIsShieldBrokenCondition : public FStateTreeCondit
 
 	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
 };
+
+/** 目标在攻击距离内条件的实例数据 */
+USTRUCT()
+struct CYBERRUIN_API FStateTreeTargetInRangeConditionInstanceData
+{
+	GENERATED_BODY()
+
+	/** 由 AI Schema 自动绑定的上下文 */
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	/** 进入攻击的距离门槛(cm)：目标贴到此距离内即可出招 */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float Range = 200.f;
+};
+
+/**
+ * 目标在攻击距离内判断（方案 §五 哨兵攻击 / §九 审计官攻击）：
+ * CurrentTarget 非空且距本怪 ≤ Range 才通过。
+ * 与 AttackReady 组成追击 → 攻击转换的双条件（够近 + 冷却转好才出招）。
+ */
+USTRUCT(Meta = (DisplayName = "目标在攻击距离内 (Target In Range)", Category = "AI|Combat"))
+struct CYBERRUIN_API FStateTreeTargetInRangeCondition : public FStateTreeConditionBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeTargetInRangeConditionInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+/** 攻击冷却就绪条件的实例数据 */
+USTRUCT()
+struct CYBERRUIN_API FStateTreeAttackReadyConditionInstanceData
+{
+	GENERATED_BODY()
+
+	/** 由 AI Schema 自动绑定的上下文 */
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	/** 冷却时长(s)：距上次出招超过此值才允许再次攻击 */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float Cooldown = 1.8f;
+};
+
+/**
+ * 攻击冷却就绪判断：距 AIC 上次出招时刻（LastAttackTime，近战任务出招时写入）已超过 Cooldown 才通过。
+ * 防止贴脸状态下攻击态和追击态每帧互弹（收招即出招）——冷却内留在追击态绕着目标走位。
+ */
+USTRUCT(Meta = (DisplayName = "攻击冷却就绪 (Attack Ready)", Category = "AI|Combat"))
+struct CYBERRUIN_API FStateTreeAttackReadyCondition : public FStateTreeConditionBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeAttackReadyConditionInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};

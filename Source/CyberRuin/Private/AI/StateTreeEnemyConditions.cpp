@@ -92,3 +92,28 @@ bool FStateTreeHasTargetCondition::TestCondition(FStateTreeExecutionContext& Con
 	const ACyberEnemyAIController* EnemyAIC = Cast<ACyberEnemyAIController>(InstanceData.AIController.Get());
 	return EnemyAIC && EnemyAIC->CurrentTarget != nullptr;
 }
+
+bool FStateTreeTargetInRangeCondition::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	const ACyberEnemyAIController* EnemyAIC = Cast<ACyberEnemyAIController>(InstanceData.AIController.Get());
+	if (!EnemyAIC || !EnemyAIC->GetPawn() || !EnemyAIC->CurrentTarget)
+	{
+		return false;
+	}
+
+	return FVector::Dist2D(EnemyAIC->GetPawn()->GetActorLocation(), EnemyAIC->CurrentTarget->GetActorLocation()) <= InstanceData.Range;
+}
+
+bool FStateTreeAttackReadyCondition::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	const ACyberEnemyAIController* EnemyAIC = Cast<ACyberEnemyAIController>(InstanceData.AIController.Get());
+	if (!EnemyAIC || !EnemyAIC->GetWorld())
+	{
+		return false;
+	}
+
+	// LastAttackTime 出招时刻由近战任务写入（负值 = 从未出招，永远视为冷却完毕）
+	return EnemyAIC->GetWorld()->GetTimeSeconds() - EnemyAIC->LastAttackTime >= InstanceData.Cooldown;
+}

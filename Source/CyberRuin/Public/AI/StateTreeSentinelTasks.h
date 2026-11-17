@@ -182,3 +182,51 @@ struct CYBERRUIN_API FStateTreeIdleTask : public FStateTreeAITaskBase
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
 };
+
+/** 近战挥击任务的实例数据 */
+USTRUCT()
+struct CYBERRUIN_API FStateTreeMeleeAttackTaskInstanceData
+{
+	GENERATED_BODY()
+
+	/** 由 AI Schema 自动绑定的上下文 */
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	/** 命中判定距离(cm)：出招瞬间目标不超出此距离才算命中（主角方距离击中判定的怪侧来源） */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float HitRange = 220.f;
+
+	/** 出招延迟(s)：进入攻击后隔多久做命中判定（对上动画打击点） */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float StrikeDelay = 0.35f;
+
+	/** 运行期：是否已做过命中判定 */
+	UPROPERTY(Transient)
+	bool bStruck = false;
+
+	/** 运行期：命中判定倒计时 */
+	UPROPERTY(Transient)
+	float StrikeTimer = 0.f;
+};
+
+/**
+ * 近战挥击（方案 §五 哨兵攻击 / §九 审计官攻击）：贴身出招——停移动、面向目标、
+ * 播主行动动画（PlayPrimaryAction，播完 AIC Tick 自动恢复跑动）；StrikeDelay 后按 HitRange 做距离
+ * 命中判定（命中只打日志，玩家侧受伤由主角组接）；动作播完 Succeeded 回追击。
+ * 出招时写 AIC->LastAttackTime（追击→攻击的 AttackReady 冷却条件读它，冷却内不再进攻击态）。
+ */
+USTRUCT(Meta = (DisplayName = "近战挥击 (Melee Attack)", Category = "AI|Combat"))
+struct CYBERRUIN_API FStateTreeMeleeAttackTask : public FStateTreeAITaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FStateTreeMeleeAttackTaskInstanceData;
+
+	FStateTreeMeleeAttackTask();
+
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override;
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override;
+};

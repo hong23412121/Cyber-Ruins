@@ -81,10 +81,19 @@ EStateTreeRunStatus FStateTreeArbiterGuardTask::Tick(FStateTreeExecutionContext&
 		// 射程内开火（大伤害由 Gameplay 层挂钩，测试期节流打日志 + 灰盒开火动画）
 		if (Dist <= InstanceData.FireRange && World->GetTimeSeconds() - InstanceData.LastFireLogTime > 1.f)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[裁决者] %s 对 %s 开火！距离 %.0fcm（盾未破不追击）"),
-				*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Dist);
 			InstanceData.LastFireLogTime = World->GetTimeSeconds();
 			EnemyAIC->PlayPrimaryAction();
+			// 距离命中判定（主角方距离击中判定的怪侧来源）：出膛瞬间超出 FireHitRange 即落空
+			if (Dist <= InstanceData.FireHitRange)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Attack] %s 开火命中 %s（距离 %.0f ≤ %.0f，盾未破不追击）→ 待玩家侧接伤害"),
+					*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Dist, InstanceData.FireHitRange);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Display, TEXT("[Attack] %s 开火落空（%s 在 %.0fcm，超出命中距离 %.0f，仍在开火射程 %.0f 内）"),
+					*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Dist, InstanceData.FireHitRange, InstanceData.FireRange);
+			}
 		}
 
 		// 调试自动破盾：目标持续在射程内可见 → 视为火力压制破盾
