@@ -8,16 +8,16 @@
  * 怪物 AI 资产程序化构建命令（方案 §11 落地）：
  *   UnrealEditor-Cmd.exe CyberRuin.uproject -run=CyberRuinBuildAssets -unattended -nullrhi
  * 产出（全部在 /Game/XuTang/，重复执行幂等覆盖）：
- *   1. ST_Sentinel + BP_AIC_Sentinel + BP_Enemy_Sentinel —— 哨兵（巡逻/追击/解卡，方案 §11.2）
+ *   1. ST_Sentinel + BP_AIC_Sentinel + BP_Enemy_Sentinel —— 哨兵（巡逻/追击/攻击/解卡，方案 §11.2）
  *   2. ST_Predator + BP_AIC_Predator + BP_Enemy_Predator —— 掠食者（索敌漫游/绕后/背刺/被发现，§11.3）
- *   3. ST_Arbiter + BP_AIC_Arbiter + BP_Enemy_Arbiter —— 裁决者（守盾警戒/追杀/解卡，§11.4，调试自动破盾）
- *   4. ST_AuditorStub + BP_AIC_Auditor + BP_Enemy_Auditor —— 审计官移动测试桩（§九，索敌待机/追击/解卡）
+ *   3. ST_Arbiter + BP_AIC_Arbiter + BP_Enemy_Arbiter —— 裁决者（守盾警戒/追杀/解卡，§11.4，调试自动破盾；开火带距离命中判定）
+ *   4. ST_AuditorStub + BP_AIC_Auditor + BP_Enemy_Auditor —— 审计官移动测试桩（§九，索敌待机/追击/攻击/解卡）
  *   5. BP_Drone + BP_SwarmHive —— 蜂群（DroneClass 赋值 + 无人机可见网格体，§七）
  *   6. BS_Sentinel_Patrol / BS_Predator_Prowl / BS_Arbiter_Plod / BS_Auditor_Stride —— 程序生成"纯走"混合空间（§十四 步态差异化），
  *      四怪怪壳统一切单节点模式由 AIC Tick 驱动（ABP_Unarmed 对 AI Pawn 不产步行姿态，实机发现后弃用，正式 AnimBP 到位后由模型侧接管）
  */
 /**
- * 单怪灰盒表现包（步态差异化）：跑动混合空间 + 播放速率 + 主行动/受击动画。
+ * 单怪灰盒表现包（步态差异化）：跑动混合空间 + 播放速率 + 主行动/受击/死亡动画。
  * LocomotionBlendSpace 为空 = 走 ABP_Unarmed 路线（哨兵），非空 = 怪壳切单节点模式。
  */
 struct FMonsterVisuals
@@ -26,6 +26,7 @@ struct FMonsterVisuals
 	float LocomotionPlayRate = 1.f;
 	TObjectPtr<class UAnimSequence> PrimaryActionAnim;
 	TObjectPtr<class UAnimSequence> HitReactAnim;
+	TObjectPtr<class UAnimSequence> DeathAnim;
 };
 
 UCLASS()
@@ -52,10 +53,11 @@ private:
 	class UStateTree* BuildAuditorStubStateTree();
 
 	/**
-	 * 建怪物 AIC 蓝图（ACyberEnemyAIController 子类，指定 StateTree 资产 + 灰盒表现包；裁决者开调试自动破盾）。
+	 * 建怪物 AIC 蓝图（ACyberEnemyAIController 子类，指定 StateTree 资产 + 战斗底座 + 灰盒表现包）。
+	 * Health 烘焙 AIC 血量（哨兵3/掠食者2/裁决者5/审计官4）；bDebugAutoTakeHit = 玩家贴近自动挨刀测试旗。
 	 * Visuals.LocomotionBlendSpace 非空时 AIC Tick 按速度驱动单节点混合；为空则不驱动（哨兵走 ABP）。
 	 */
-	class UBlueprint* BuildEnemyAIC(const FString& AssetName, class UStateTree* InStateTree, bool bDebugAutoBreakShield, const FMonsterVisuals& Visuals);
+	class UBlueprint* BuildEnemyAIC(const FString& AssetName, class UStateTree* InStateTree, bool bDebugAutoBreakShield, float Health, bool bDebugAutoTakeHit, const FMonsterVisuals& Visuals);
 
 	/**
 	 * 建怪壳蓝图（BP_BaseEnemy 子类 + AntiStuck 组件 + 可选 PatrolRoute + 指定 AIC + 烘焙 Manny 网格体）。

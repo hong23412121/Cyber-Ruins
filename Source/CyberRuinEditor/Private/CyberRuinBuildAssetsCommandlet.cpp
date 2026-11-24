@@ -190,9 +190,14 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildSentinelStateTree()
 	UStateTreeState& Unstick = Root.AddChildState(TEXT("解卡"));
 	Unstick.AddTask<FStateTreeWarpUnstuckTask>().GetInstanceData().SearchRadius = 200.f;
 
+	// 状态 4：近战挥击（贴身出招：距离命中判定 + 攻击动画，播完回追击；冷却内不进）
+	UStateTreeState& Attack = Root.AddChildState(TEXT("攻击"));
+	Attack.AddTask<FStateTreeMeleeAttackTask>();  // HitRange 220 / StrikeDelay 0.35
+
 	// ---------- 转换（卡死最高优先，每状态一条） ----------
 	AddStuckTransitions(Patrol, Unstick);
 	AddStuckTransitions(Chase, Unstick);
+	AddStuckTransitions(Attack, Unstick);
 	AddStuckTransitions(Unstick, Unstick);
 
 	// 巡逻 → 追击：看见敌人事件（感知 → AIC 发送）
@@ -201,6 +206,17 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildSentinelStateTree()
 	// 追击 → 巡逻：丢失目标 / 目标为空兜底（不限距离追击：不做离家折返，追到真看不见为止）
 	Chase.AddTransition(EStateTreeTransitionTrigger::OnEvent, FCyberRuinNativeTags::Get().EnemyLost, EStateTreeTransitionType::GotoState, &Patrol);
 	Chase.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Patrol);
+
+	// 追击 → 攻击：目标进攻击距离且冷却就绪（双条件，中优先——冷却内留在追击绕位走）
+	FStateTreeTransition& Strike = Chase.AddTransition(EStateTreeTransitionTrigger::OnTick, EStateTreeTransitionType::GotoState, &Attack);
+	Strike.Priority = EStateTreeTransitionPriority::Medium;
+	Strike.AddConditionWithOuter<FStateTreeTargetInRangeCondition>(&Chase).GetInstanceData().Range = 200.f;
+	Strike.AddConditionWithOuter<FStateTreeAttackReadyCondition>(&Chase).GetInstanceData().Cooldown = 1.8f;
+
+	// 攻击 → 追击：收招（动作播完/出招失败兜底）继续追
+	Attack.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Chase);
+	// 攻击 → 巡逻：目标丢失（与追击同款语义）
+	Attack.AddTransition(EStateTreeTransitionTrigger::OnEvent, FCyberRuinNativeTags::Get().EnemyLost, EStateTreeTransitionType::GotoState, &Patrol);
 
 	// 解卡 → 回巡逻
 	Unstick.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Patrol);
@@ -340,8 +356,13 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildAuditorStubStateTree()
 	UStateTreeState& Unstick = Root.AddChildState(TEXT("解卡"));
 	Unstick.AddTask<FStateTreeWarpUnstuckTask>().GetInstanceData().SearchRadius = 100.f;
 
+	// 状态 4：近战挥击（同哨兵：贴身出招 + 距离命中判定）
+	UStateTreeState& Attack = Root.AddChildState(TEXT("攻击"));
+	Attack.AddTask<FStateTreeMeleeAttackTask>();
+
 	// ---------- 转换 ----------
 	AddStuckTransitions(Chase, Unstick);
+	AddStuckTransitions(Attack, Unstick);
 	AddStuckTransitions(Unstick, Unstick);
 
 	// 索敌待机 → 追击：看见敌人
@@ -350,6 +371,16 @@ UStateTree* UCyberRuinBuildAssetsCommandlet::BuildAuditorStubStateTree()
 	// 追击 → 索敌待机：目标丢失 / 兜底
 	Chase.AddTransition(EStateTreeTransitionTrigger::OnEvent, FCyberRuinNativeTags::Get().EnemyLost, EStateTreeTransitionType::GotoState, &Idle);
 	Chase.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Idle);
+
+	// 追击 → 攻击：目标进攻击距离且冷却就绪（同哨兵双条件）
+	FStateTreeTransition& Strike = Chase.AddTransition(EStateTreeTransitionTrigger::OnTick, EStateTreeTransitionType::GotoState, &Attack);
+	Strike.Priority = EStateTreeTransitionPriority::Medium;
+	Strike.AddConditionWithOuter<FStateTreeTargetInRangeCondition>(&Chase).GetInstanceData().Range = 200.f;
+	Strike.AddConditionWithOuter<FStateTreeAttackReadyCondition>(&Chase).GetInstanceData().Cooldown = 1.8f;
+
+	// 攻击 → 追击：收招继续追；目标丢失回索敌待机
+	Attack.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Chase);
+	Attack.AddTransition(EStateTreeTransitionTrigger::OnEvent, FCyberRuinNativeTags::Get().EnemyLost, EStateTreeTransitionType::GotoState, &Idle);
 
 	// 解卡 → 回索敌待机
 	Unstick.AddTransition(EStateTreeTransitionTrigger::OnStateCompleted, EStateTreeTransitionType::GotoState, &Idle);
@@ -425,7 +456,7 @@ UBlendSpace1D* UCyberRuinBuildAssetsCommandlet::BuildWalkOnlyBlendSpace(const FS
 	return BlendSpace;
 }
 
-UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyAIC(const FString& AssetName, UStateTree* InStateTree, bool bDebugAutoBreakShield, const FMonsterVisuals& Visuals)
+UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyAIC(const FString& AssetName, UStateTree* InStateTree, bool bDebugAutoBreakShield, float Health, bool bDebugAutoTakeHit, const FMonsterVisuals& Visuals)
 {
 	UBlueprint* AICBlueprint = GetOrCreateBlueprint(
 		ACyberEnemyAIController::StaticClass(), FString::Printf(TEXT("/Game/XuTang/%s"), *AssetName), *AssetName);
@@ -435,15 +466,18 @@ UBlueprint* UCyberRuinBuildAssetsCommandlet::BuildEnemyAIC(const FString& AssetN
 		return nullptr;
 	}
 
-	// 默认值：指定 StateTree 资产 + 调试自动破盾开关（裁决者测试用）+ 灰盒表现包（步态/动作动画）
+	// 默认值：指定 StateTree 资产 + 战斗底座（血量/受击测试旗）+ 调试自动破盾开关（裁决者测试用）+ 灰盒表现包（步态/动作动画）
 	if (ACyberEnemyAIController* AICCDO = Cast<ACyberEnemyAIController>(AICBlueprint->GeneratedClass->GetDefaultObject()))
 	{
 		AICCDO->EnemyStateTree = InStateTree;
 		AICCDO->bDebugAutoBreakShield = bDebugAutoBreakShield;
+		AICCDO->Health = Health;
+		AICCDO->bDebugAutoTakeHit = bDebugAutoTakeHit;
 		AICCDO->LocomotionBlendSpace = Visuals.LocomotionBlendSpace;
 		AICCDO->LocomotionPlayRate = Visuals.LocomotionPlayRate;
 		AICCDO->PrimaryActionAnim = Visuals.PrimaryActionAnim;
 		AICCDO->HitReactAnim = Visuals.HitReactAnim;
+		AICCDO->DeathAnim = Visuals.DeathAnim;
 	}
 	FKismetEditorUtilities::CompileBlueprint(AICBlueprint);
 	return AICBlueprint;
@@ -632,7 +666,12 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	}
 	FMonsterVisuals SentinelVisuals;
 	SentinelVisuals.LocomotionBlendSpace = PatrolBS;
-	UBlueprint* SentinelAIC = BuildEnemyAIC(TEXT("BP_AIC_Sentinel"), SentinelTree, false, SentinelVisuals);
+	// 哨兵近战挥击用重击观感的 MM_ChargedAttack；受击替身沿用 MM_Attack_03（HitReact 全家是叠加动画，单节点模式下不可用）
+	SentinelVisuals.PrimaryActionAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_ChargedAttack"));
+	SentinelVisuals.HitReactAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03"));
+	SentinelVisuals.DeathAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01"));
+	// 哨兵默认开受击测试旗：PIE 走近它 250cm 即自动挨刀，无玩家侧攻击代码也能验收 受击→死亡→留尸→销毁 全链路（玩家侧就绪后关）
+	UBlueprint* SentinelAIC = BuildEnemyAIC(TEXT("BP_AIC_Sentinel"), SentinelTree, false, 3.f, true, SentinelVisuals);
 	if (!SentinelAIC || !SaveAsset(SentinelAIC))
 	{
 		return 1;
@@ -659,7 +698,9 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	PredatorVisuals.LocomotionBlendSpace = ProwlBS;
 	PredatorVisuals.LocomotionPlayRate = 0.9f;
 	PredatorVisuals.PrimaryActionAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01"));
-	UBlueprint* PredatorAIC = BuildEnemyAIC(TEXT("BP_AIC_Predator"), PredatorTree, false, PredatorVisuals);
+	PredatorVisuals.HitReactAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03"));
+	PredatorVisuals.DeathAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01"));
+	UBlueprint* PredatorAIC = BuildEnemyAIC(TEXT("BP_AIC_Predator"), PredatorTree, false, 2.f, false, PredatorVisuals);
 	if (!PredatorAIC || !SaveAsset(PredatorAIC))
 	{
 		return 1;
@@ -688,7 +729,8 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	ArbiterVisuals.LocomotionPlayRate = 0.8f;
 	ArbiterVisuals.PrimaryActionAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_02"));
 	ArbiterVisuals.HitReactAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03"));
-	UBlueprint* ArbiterAIC = BuildEnemyAIC(TEXT("BP_AIC_Arbiter"), ArbiterTree, true, ArbiterVisuals);
+	ArbiterVisuals.DeathAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01"));
+	UBlueprint* ArbiterAIC = BuildEnemyAIC(TEXT("BP_AIC_Arbiter"), ArbiterTree, true, 5.f, false, ArbiterVisuals);
 	if (!ArbiterAIC || !SaveAsset(ArbiterAIC))
 	{
 		return 1;
@@ -714,7 +756,11 @@ int32 UCyberRuinBuildAssetsCommandlet::Main(const FString& Params)
 	FMonsterVisuals AuditorVisuals;
 	AuditorVisuals.LocomotionBlendSpace = StrideBS;
 	AuditorVisuals.LocomotionPlayRate = 0.95f;
-	UBlueprint* AuditorAIC = BuildEnemyAIC(TEXT("BP_AIC_Auditor"), AuditorTree, false, AuditorVisuals);
+	// 桩行为加近战挥击（同哨兵，方便对照验收）：MM_Attack_01 出招 + 受击/死亡动画接线
+	AuditorVisuals.PrimaryActionAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_01"));
+	AuditorVisuals.HitReactAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/Attack/MM_Attack_03"));
+	AuditorVisuals.DeathAnim = LoadMannequinAnim(TEXT("/Game/Characters/Mannequins/Anims/Death/MM_Death_Front_01"));
+	UBlueprint* AuditorAIC = BuildEnemyAIC(TEXT("BP_AIC_Auditor"), AuditorTree, false, 4.f, false, AuditorVisuals);
 	if (!AuditorAIC || !SaveAsset(AuditorAIC))
 	{
 		return 1;

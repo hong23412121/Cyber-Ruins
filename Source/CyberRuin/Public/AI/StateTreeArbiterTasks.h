@@ -25,6 +25,10 @@ struct CYBERRUIN_API FStateTreeArbiterGuardTaskInstanceData
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float FireRange = 1200.f;
 
+	/** 命中距离(cm)：出膛瞬间目标超出此距离算落空（比 FireRange 短一截，极限射程有擦弹观感；灰盒约定，正式弹道由 Gameplay 层接管） */
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float FireHitRange = 1000.f;
+
 	/** 调试：持续可见多少秒自动破盾（真破盾事件由 Gameplay 层接手后可关） */
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float DebugBreakSeconds = 6.f;

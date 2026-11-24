@@ -4,6 +4,7 @@
 #include "AI/CyberEnemyAIController.h"
 #include "AI/PatrolRouteComponent.h"
 #include "AIController.h"
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "StateTreeExecutionContext.h"
@@ -270,4 +271,71 @@ EStateTreeRunStatus FStateTreeIdleTask::Tick(FStateTreeExecutionContext& Context
 		Pawn->AddActorWorldRotation(FRotator(0.f, InstanceData.ScanDegreesPerSecond * DeltaTime, 0.f));
 	}
 	return EStateTreeRunStatus::Running;
+}
+
+// ---------------- 近战挥击 ----------------
+
+FStateTreeMeleeAttackTask::FStateTreeMeleeAttackTask()
+{
+	bShouldCallTick = true;
+	bShouldCopyBoundPropertiesOnTick = false;
+	bShouldCopyBoundPropertiesOnExitState = false;
+}
+
+EStateTreeRunStatus FStateTreeMeleeAttackTask::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	ACyberEnemyAIController* EnemyAIC = Cast<ACyberEnemyAIController>(InstanceData.AIController.Get());
+	AActor* Target = EnemyAIC ? EnemyAIC->CurrentTarget.Get() : nullptr;
+	UWorld* World = EnemyAIC ? EnemyAIC->GetWorld() : nullptr;
+	if (!EnemyAIC || !EnemyAIC->GetPawn() || !Target || !World)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 原地出招：停移动、面向目标、播主行动动画（掠食者背刺同款播放管线，播完 AIC Tick 自动恢复跑动）
+	InstanceData.AIController->StopMovement();
+	InstanceData.AIController->SetFocus(Target);
+	EnemyAIC->PlayPrimaryAction();
+	EnemyAIC->LastAttackTime = World->GetTimeSeconds(); // 冷却锚点：AttackReady 条件读
+	InstanceData.bStruck = false;
+	InstanceData.StrikeTimer = InstanceData.StrikeDelay;
+	UE_LOG(LogTemp, Display, TEXT("[Attack] %s 对 %s 出招（命中判定 %.0fcm / %.0fs 后）"),
+		*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), InstanceData.HitRange, InstanceData.StrikeDelay);
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FStateTreeMeleeAttackTask::Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const
+{
+	FInstanceDataType& InstanceData = Context.GetInstanceData(*this);
+	ACyberEnemyAIController* EnemyAIC = Cast<ACyberEnemyAIController>(InstanceData.AIController.Get());
+	AActor* Target = EnemyAIC ? EnemyAIC->CurrentTarget.Get() : nullptr;
+	if (!EnemyAIC || !EnemyAIC->GetPawn() || !Target)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 打击点：StrikeDelay 后做距离命中判定（灰盒约定进圈即中；命中后续由玩家侧/Gameplay 层接伤害）
+	if (!InstanceData.bStruck)
+	{
+		InstanceData.StrikeTimer -= DeltaTime;
+		if (InstanceData.StrikeTimer <= 0.f)
+		{
+			InstanceData.bStruck = true;
+			const float Dist = FVector::Dist2D(EnemyAIC->GetPawn()->GetActorLocation(), Target->GetActorLocation());
+			if (Dist <= InstanceData.HitRange)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Attack] %s 挥击命中 %s（距离 %.0f ≤ %.0f）→ 待玩家侧接伤害"),
+					*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Dist, InstanceData.HitRange);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Display, TEXT("[Attack] %s 挥击落空（%s 已拉开 %.0f > %.0f）"),
+					*GetNameSafe(EnemyAIC->GetPawn()), *GetNameSafe(Target), Dist, InstanceData.HitRange);
+			}
+		}
+	}
+
+	// 收招：主行动动画播完即回追击（再出招要等 AttackReady 冷却条件放行）
+	return EnemyAIC->IsActionPlaying() ? EStateTreeRunStatus::Running : EStateTreeRunStatus::Succeeded;
 }
